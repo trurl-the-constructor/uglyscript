@@ -29,7 +29,7 @@ import Language.PureScript.Types
 import Language.PureScript.Kinds
 import Language.PureScript.Pretty.Common
 import Language.PureScript.Pretty.Kinds
-import Language.PureScript.Environment
+import Language.PureScript.Primitives
 
 typeLiterals :: Pattern () Type String
 typeLiterals = mkPattern match

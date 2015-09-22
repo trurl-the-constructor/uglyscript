@@ -25,8 +25,8 @@ import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.Unify
 
 import Language.PureScript.AST
-import Language.PureScript.Environment
 import Language.PureScript.Errors
+import Language.PureScript.Primitives
 import Language.PureScript.TypeChecker.Monad
 import Language.PureScript.TypeChecker.Skolems
 import Language.PureScript.TypeChecker.Synonyms

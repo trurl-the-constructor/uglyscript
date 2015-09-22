@@ -27,7 +27,6 @@ import Language.PureScript.Kinds
 import Language.PureScript.Names
 import Language.PureScript.TypeClassDictionaries
 import Language.PureScript.Types
-import qualified Language.PureScript.Constants as C
 
 -- |
 -- The @Environment@ defines all values and types which are currently in scope:
@@ -59,11 +58,6 @@ data Environment = Environment {
   , typeClasses :: M.Map (Qualified ProperName) ([(String, Maybe Kind)], [(Ident, Type)], [Constraint])
   } deriving (Show)
 
--- |
--- The initial environment with no values and only the default javascript types defined
---
-initEnvironment :: Environment
-initEnvironment = Environment M.empty primTypes M.empty M.empty M.empty M.empty
 
 -- |
 -- The visibility of a name in scope
@@ -95,7 +89,11 @@ data NameKind
   -- |
   -- A name for member introduced by foreign import
   --
-  | External deriving (Show, Eq, Data, Typeable)
+  | External
+  -- |
+  -- A name for a variable
+  --
+  | Variable deriving (Show, Eq, Data, Typeable)
 
 -- |
 -- The kinds of a type
@@ -150,100 +148,7 @@ instance A.FromJSON DataDeclType where
       "newtype" -> return Newtype
       other -> fail $ "invalid type: '" ++ T.unpack other ++ "'"
 
--- |
--- Construct a ProperName in the Prim module
---
-primName :: String -> Qualified ProperName
-primName = Qualified (Just $ ModuleName [ProperName C.prim]) . ProperName
 
--- |
--- Construct a type in the Prim module
---
-primTy :: String -> Type
-primTy = TypeConstructor . primName
-
--- |
--- Type constructor for functions
---
-tyFunction :: Type
-tyFunction = primTy "Function"
-
--- |
--- Type constructor for strings
---
-tyString :: Type
-tyString = primTy "String"
-
--- |
--- Type constructor for strings
---
-tyChar :: Type
-tyChar = primTy "Char"
-
--- |
--- Type constructor for numbers
---
-tyNumber :: Type
-tyNumber = primTy "Number"
-
--- |
--- Type constructor for integers
---
-tyInt :: Type
-tyInt = primTy "Int"
-
--- |
--- Type constructor for booleans
---
-tyBoolean :: Type
-tyBoolean = primTy "Boolean"
-
--- |
--- Type constructor for arrays
---
-tyArray :: Type
-tyArray = primTy "Array"
-
--- |
--- Type constructor for objects
---
-tyObject :: Type
-tyObject = primTy "Object"
-
--- |
--- Check whether a type is an object
---
-isObject :: Type -> Bool
-isObject = isTypeOrApplied tyObject
-
--- |
--- Check whether a type is a function
---
-isFunction :: Type -> Bool
-isFunction = isTypeOrApplied tyFunction
-
-isTypeOrApplied :: Type -> Type -> Bool
-isTypeOrApplied t1 (TypeApp t2 _) = t1 == t2
-isTypeOrApplied t1 t2 = t1 == t2
-
--- |
--- Smart constructor for function types
---
-function :: Type -> Type -> Type
-function t1 = TypeApp (TypeApp tyFunction t1)
-
--- |
--- The primitive types in the external javascript environment with their associated kinds.
---
-primTypes :: M.Map (Qualified ProperName) (Kind, TypeKind)
-primTypes = M.fromList [ (primName "Function" , (FunKind Star (FunKind Star Star), ExternData))
-                       , (primName "Array"    , (FunKind Star Star, ExternData))
-                       , (primName "Object"   , (FunKind (Row Star) Star, ExternData))
-                       , (primName "String"   , (Star, ExternData))
-                       , (primName "Char"     , (Star, ExternData))
-                       , (primName "Number"   , (Star, ExternData))
-                       , (primName "Int"      , (Star, ExternData))
-                       , (primName "Boolean"  , (Star, ExternData)) ]
 
 -- |
 -- Finds information about data constructors from the current environment.

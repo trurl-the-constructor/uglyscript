@@ -24,10 +24,11 @@ module Language.PureScript.Sugar.TypeClasses
   ) where
 
 import Language.PureScript.AST hiding (isExported)
-import Language.PureScript.Environment
+import Language.PureScript.Environment (NameKind(..))
 import Language.PureScript.Errors
 import Language.PureScript.Kinds
 import Language.PureScript.Names
+import Language.PureScript.Primitives
 import Language.PureScript.Sugar.CaseDeclarations
 import Control.Monad.Supply.Class
 import Language.PureScript.Types

@@ -27,8 +27,8 @@ import Language.PureScript.Types
 import Language.PureScript.Parser.Common
 import Language.PureScript.Parser.Kinds
 import Language.PureScript.Parser.Lexer
-import Language.PureScript.Environment
-
+import Language.PureScript.Primitives
+   
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Expr as P
 

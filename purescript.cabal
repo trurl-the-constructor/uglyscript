@@ -116,6 +116,7 @@ library
                      Language.PureScript.Pretty.Kinds
                      Language.PureScript.Pretty.Types
                      Language.PureScript.Pretty.Values
+                     Language.PureScript.Primitives
                      Language.PureScript.Renamer
                      Language.PureScript.Sugar
                      Language.PureScript.Sugar.BindingGroups

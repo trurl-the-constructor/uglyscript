@@ -31,6 +31,7 @@ import Language.PureScript.CoreFn.Meta
 import Language.PureScript.CoreFn.Module
 import Language.PureScript.Environment
 import Language.PureScript.Names
+import Language.PureScript.Primitives
 import Language.PureScript.Sugar.TypeClasses (typeClassMemberName, superClassDictionaryNames)
 import Language.PureScript.Types
 import Language.PureScript.Comments

@@ -40,6 +40,7 @@ import Control.Monad.Error.Class (MonadError(..))
 
 import Language.PureScript.Types
 import Language.PureScript.Names
+import Language.PureScript.Primitives
 import Language.PureScript.Kinds
 import Language.PureScript.AST
 import Language.PureScript.TypeClassDictionaries

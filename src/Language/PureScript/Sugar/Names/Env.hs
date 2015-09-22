@@ -38,9 +38,9 @@ import Control.Monad.Error.Class (MonadError(..))
 import qualified Data.Map as M
 
 import Language.PureScript.AST
-import Language.PureScript.Names
-import Language.PureScript.Environment
 import Language.PureScript.Errors
+import Language.PureScript.Names
+import Language.PureScript.Primitives
 
 -- |
 -- The imported declarations for a module, including the module's own members.
@@ -132,7 +132,7 @@ envModuleExports (_, _, exps) = exps
 -- The exported types from the @Prim@ module
 --
 primExports :: Exports
-primExports = Exports (mkTypeEntry `map` M.keys primTypes) [] []
+primExports = Exports (mkTypeEntry `map` M.keys primTypes) [] (map (\(a,b) -> (b,a)) (M.keys primValues))
   where
   mkTypeEntry (Qualified _ name) = ((name, []), ModuleName [ProperName "Prim"])
 

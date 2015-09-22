@@ -26,7 +26,7 @@ import Language.PureScript.Names
 import Language.PureScript.Types
 import Language.PureScript.Kinds
 import Language.PureScript.Pretty.Kinds
-import Language.PureScript.Environment
+import Language.PureScript.Primitives
 
 import Language.PureScript.Docs.RenderedCode.Types
 import Language.PureScript.Docs.Utils.MonoidExtras

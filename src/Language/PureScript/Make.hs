@@ -74,6 +74,7 @@ import Language.PureScript.Names
 import Language.PureScript.Options
 import Language.PureScript.Parser
 import Language.PureScript.Pretty
+import Language.PureScript.Primitives
 import Language.PureScript.Renamer
 import Language.PureScript.Sugar
 import Language.PureScript.TypeChecker

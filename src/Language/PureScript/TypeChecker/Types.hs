@@ -56,6 +56,7 @@ import Language.PureScript.Environment
 import Language.PureScript.Errors
 import Language.PureScript.Kinds
 import Language.PureScript.Names
+import Language.PureScript.Primitives
 import Language.PureScript.Traversals
 import Language.PureScript.TypeChecker.Entailment
 import Language.PureScript.TypeChecker.Kinds
