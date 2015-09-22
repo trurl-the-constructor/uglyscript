@@ -44,6 +44,7 @@ everywhereOnValues f g h = (f', g', h')
   f' :: Declaration -> Declaration
   f' (DataBindingGroupDeclaration ds) = f (DataBindingGroupDeclaration (map f' ds))
   f' (ValueDeclaration name nameKind bs val) = f (ValueDeclaration name nameKind (map h' bs) ((map (g' *** g') +++ g') val))
+  f' (VariableDeclaration name val) = f (VariableDeclaration name (g' val))
   f' (BindingGroupDeclaration ds) = f (BindingGroupDeclaration (map (\(name, nameKind, val) -> (name, nameKind, g' val)) ds))
   f' (TypeClassDeclaration name args implies ds) = f (TypeClassDeclaration name args implies (map f' ds))
   f' (TypeInstanceDeclaration name cs className args ds) = f (TypeInstanceDeclaration name cs className args (mapTypeInstanceBody (map f') ds))
@@ -70,6 +71,7 @@ everywhereOnValues f g h = (f', g', h')
   g' (TypedValue check v ty) = g (TypedValue check (g' v) ty)
   g' (Let ds v) = g (Let (map f' ds) (g' v))
   g' (Do es) = g (Do (map handleDoNotationElement es))
+  g' (Assign name v) = g (Assign name (g' v))
   g' (PositionedValue pos com v) = g (PositionedValue pos com (g' v))
   g' other = g other
 
@@ -102,6 +104,7 @@ everywhereOnValuesTopDownM f g h = (f' <=< f, g' <=< g, h' <=< h)
   where
   f' (DataBindingGroupDeclaration ds) = DataBindingGroupDeclaration <$> mapM (f' <=< f) ds
   f' (ValueDeclaration name nameKind bs val) = ValueDeclaration name nameKind <$> mapM (h' <=< h) bs <*> eitherM (mapM (pairM (g' <=< g) (g' <=< g))) (g' <=< g) val
+  f' (VariableDeclaration name val) = VariableDeclaration name <$> (g' <=< g) val
   f' (BindingGroupDeclaration ds) = BindingGroupDeclaration <$> mapM (\(name, nameKind, val) -> (,,) name nameKind <$> (g val >>= g')) ds
   f' (TypeClassDeclaration name args implies ds) = TypeClassDeclaration name args implies <$> mapM (f' <=< f) ds
   f' (TypeInstanceDeclaration name cs className args ds) = TypeInstanceDeclaration name cs className args <$> traverseTypeInstanceBody (traverse (f' <=< f)) ds
@@ -127,6 +130,7 @@ everywhereOnValuesTopDownM f g h = (f' <=< f, g' <=< g, h' <=< h)
   g' (TypedValue check v ty) = TypedValue check <$> (g v >>= g') <*> pure ty
   g' (Let ds v) = Let <$> mapM (f' <=< f) ds <*> (g v >>= g')
   g' (Do es) = Do <$> mapM handleDoNotationElement es
+  g' (Assign name v) = Assign name <$> (g v >>= g')
   g' (PositionedValue pos com v) = PositionedValue pos com <$> (g v >>= g')
   g' other = g other
 
@@ -154,6 +158,7 @@ everywhereOnValuesM f g h = (f', g', h')
   where
   f' (DataBindingGroupDeclaration ds) = (DataBindingGroupDeclaration <$> mapM f' ds) >>= f
   f' (ValueDeclaration name nameKind bs val) = (ValueDeclaration name nameKind <$> mapM h' bs <*> eitherM (mapM (pairM g' g')) g' val) >>= f
+  f' (VariableDeclaration name val) = (VariableDeclaration name <$> g' val) >>= f
   f' (BindingGroupDeclaration ds) = (BindingGroupDeclaration <$> mapM (\(name, nameKind, val) -> (,,) name nameKind <$> g' val) ds) >>= f
   f' (TypeClassDeclaration name args implies ds) = (TypeClassDeclaration name args implies <$> mapM f' ds) >>= f
   f' (TypeInstanceDeclaration name cs className args ds) = (TypeInstanceDeclaration name cs className args <$> traverseTypeInstanceBody (mapM f') ds) >>= f
@@ -179,6 +184,7 @@ everywhereOnValuesM f g h = (f', g', h')
   g' (TypedValue check v ty) = (TypedValue check <$> g' v <*> pure ty) >>= g
   g' (Let ds v) = (Let <$> mapM f' ds <*> g' v) >>= g
   g' (Do es) = (Do <$> mapM handleDoNotationElement es) >>= g
+  g' (Assign name v) = (Assign name <$> g' v) >>= g
   g' (PositionedValue pos com v) = (PositionedValue pos com <$> g' v) >>= g
   g' other = g other
 
@@ -209,6 +215,7 @@ everythingOnValues (<>) f g h i j = (f', g', h', i', j')
   f' d@(DataBindingGroupDeclaration ds) = foldl (<>) (f d) (map f' ds)
   f' d@(ValueDeclaration _ _ bs (Right val)) = foldl (<>) (f d) (map h' bs) <> g' val
   f' d@(ValueDeclaration _ _ bs (Left gs)) = foldl (<>) (f d) (map h' bs ++ concatMap (\(grd, val) -> [g' grd, g' val]) gs)
+  f' d@(VariableDeclaration _ val) = f d <> g' val
   f' d@(BindingGroupDeclaration ds) = foldl (<>) (f d) (map (\(_, _, val) -> g' val) ds)
   f' d@(TypeClassDeclaration _ _ _ ds) = foldl (<>) (f d) (map f' ds)
   f' d@(TypeInstanceDeclaration _ _ _ _ (ExplicitInstance ds)) = foldl (<>) (f d) (map f' ds)
@@ -234,6 +241,7 @@ everythingOnValues (<>) f g h i j = (f', g', h', i', j')
   g' v@(TypedValue _ v1 _) = g v <> g' v1
   g' v@(Let ds v1) = foldl (<>) (g v) (map f' ds) <> g' v1
   g' v@(Do es) = foldl (<>) (g v) (map j' es)
+  g' v@(Assign _ v1) = g v <> g' v1
   g' v@(PositionedValue _ _ v1) = g v <> g' v1
   g' v = g v
 
@@ -273,6 +281,7 @@ everythingWithContextOnValues s0 r0 (<>) f g h i j = (f'' s0, g'' s0, h'' s0, i'
   f' s (DataBindingGroupDeclaration ds) = foldl (<>) r0 (map (f'' s) ds)
   f' s (ValueDeclaration _ _ bs (Right val)) = foldl (<>) r0 (map (h'' s) bs) <> g'' s val
   f' s (ValueDeclaration _ _ bs (Left gs)) = foldl (<>) r0 (map (h'' s) bs ++ concatMap (\(grd, val) -> [g'' s grd, g'' s val]) gs)
+  f' s (VariableDeclaration _ val) = g'' s val
   f' s (BindingGroupDeclaration ds) = foldl (<>) r0 (map (\(_, _, val) -> g'' s val) ds)
   f' s (TypeClassDeclaration _ _ _ ds) = foldl (<>) r0 (map (f'' s) ds)
   f' s (TypeInstanceDeclaration _ _ _ _ (ExplicitInstance ds)) = foldl (<>) r0 (map (f'' s) ds)
@@ -300,6 +309,7 @@ everythingWithContextOnValues s0 r0 (<>) f g h i j = (f'' s0, g'' s0, h'' s0, i'
   g' s (TypedValue _ v1 _) = g'' s v1
   g' s (Let ds v1) = foldl (<>) r0 (map (f'' s) ds) <> g'' s v1
   g' s (Do es) = foldl (<>) r0 (map (j'' s) es)
+  g' s (Assign _ v1) = g'' s v1
   g' s (PositionedValue _ _ v1) = g'' s v1
   g' _ _ = r0
 
@@ -342,6 +352,7 @@ everywhereWithContextOnValuesM s0 f g h i j = (f'' s0, g'' s0, h'' s0, i'' s0, j
 
   f' s (DataBindingGroupDeclaration ds) = DataBindingGroupDeclaration <$> mapM (f'' s) ds
   f' s (ValueDeclaration name nameKind bs val) = ValueDeclaration name nameKind <$> mapM (h'' s) bs <*> eitherM (mapM (pairM (g'' s) (g'' s))) (g'' s) val
+  f' s (VariableDeclaration name val) = VariableDeclaration name <$> g'' s val
   f' s (BindingGroupDeclaration ds) = BindingGroupDeclaration <$> mapM (thirdM (g'' s)) ds
   f' s (TypeClassDeclaration name args implies ds) = TypeClassDeclaration name args implies <$> mapM (f'' s) ds
   f' s (TypeInstanceDeclaration name cs className args ds) = TypeInstanceDeclaration name cs className args <$> traverseTypeInstanceBody (mapM (f'' s)) ds
@@ -369,6 +380,7 @@ everywhereWithContextOnValuesM s0 f g h i j = (f'' s0, g'' s0, h'' s0, i'' s0, j
   g' s (TypedValue check v ty) = TypedValue check <$> g'' s v <*> pure ty
   g' s (Let ds v) = Let <$> mapM (f'' s) ds <*> g'' s v
   g' s (Do es) = Do <$> mapM (j'' s) es
+  g' s (Assign name v) = Assign name <$> g'' s v
   g' s (PositionedValue pos com v) = PositionedValue pos com <$> g'' s v
   g' _ other = return other
 

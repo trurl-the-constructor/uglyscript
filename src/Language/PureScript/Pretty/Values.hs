@@ -34,7 +34,7 @@ import Control.Applicative
 import Language.PureScript.AST
 import Language.PureScript.Names
 import Language.PureScript.Pretty.Common
-import Language.PureScript.Pretty.Types (prettyPrintType, prettyPrintTypeAtom)
+import Language.PureScript.Pretty.Types (prettyPrintType, prettyPrintType, prettyPrintTypeAtom)
 
 literals :: Pattern PrinterState Expr String
 literals = mkPattern' match
@@ -71,6 +71,12 @@ literals = mkPattern' match
     , prettyPrintValue' val
     ]
   match (Var ident) = return $ show ident
+  match (Assign ident rhs) = concat <$> sequence
+    [ return $ show ident
+    , return " := "
+    , prettyPrintValue' rhs
+    ]
+  match (Read ident) = return $ '!' : show ident
   match (Do els) = concat <$> sequence
     [ return "do\n"
     , withIndent $ prettyPrintMany prettyPrintDoNotationElement els
@@ -90,8 +96,20 @@ prettyPrintDeclaration (ValueDeclaration ident _ [] (Right val)) = concat <$> se
   [ return $ show ident ++ " = "
   , prettyPrintValue' val
   ]
+prettyPrintDeclaration (VariableDeclaration ident (TypedValue _ expr ty)) =
+    concat <$> sequence [ return "var "
+                        , return $ show ident
+                        , return " :: "
+                        , return $ prettyPrintType ty
+                        , return " := "
+                        , prettyPrintValue' expr ]
+prettyPrintDeclaration (VariableDeclaration ident expr) =
+    concat <$> sequence [ return "var "
+                        , return $ show ident
+                        , return " := "
+                        , prettyPrintValue' expr ]
 prettyPrintDeclaration (PositionedDeclaration _ _ d) = prettyPrintDeclaration d
-prettyPrintDeclaration _ = error "Invalid argument to prettyPrintDeclaration"
+prettyPrintDeclaration decl = return $ "<cannot prettyprint> " ++ show decl
 
 prettyPrintCaseAlternative :: CaseAlternative -> StateT PrinterState Maybe String
 prettyPrintCaseAlternative (CaseAlternative binders result) =

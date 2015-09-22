@@ -135,6 +135,11 @@ data Declaration
   --
   | ValueDeclaration Ident NameKind [Binder] (Either [(Guard, Expr)] Expr)
   -- |
+  -- A variable declaration (name, initial value)
+  -- If the variable had a type annotation then the initial value is a TypedValue
+  --
+  | VariableDeclaration Ident Expr
+  -- |
   -- A minimal mutually recursive set of value declarations
   --
   | BindingGroupDeclaration [(Ident, NameKind, Expr)]
@@ -197,6 +202,14 @@ isValueDecl ValueDeclaration{} = True
 isValueDecl (PositionedDeclaration _ _ d) = isValueDecl d
 isValueDecl _ = False
 
+-- |
+-- Test if a declaration is a variable declaration
+--
+isVariableDecl :: Declaration -> Bool
+isVariableDecl VariableDeclaration{} = True
+isVariableDecl (PositionedDeclaration _ _ d) = isVariableDecl d
+isVariableDecl _ = False
+                
 -- |
 -- Test if a declaration is a data type or type synonym declaration
 --
@@ -357,6 +370,14 @@ data Expr
   -- Variable
   --
   | Var (Qualified Ident)
+  -- |
+  -- Variable assignment
+  --
+  | Assign (Qualified Ident) Expr
+  -- |
+  -- Reading a variable
+  --
+  | Read (Qualified Ident)
   -- |
   -- Conditional (if-then-else expression)
   --

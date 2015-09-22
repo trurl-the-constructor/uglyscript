@@ -270,7 +270,8 @@ infer' (App f arg) = do
 infer' (Var var) = do
   Just moduleName <- checkCurrentModule <$> get
   checkVisibility moduleName var
-  ty <- introduceSkolemScope <=< replaceAllTypeSynonyms <=< replaceTypeWildcards <=< lookupVariable moduleName $ var
+  varTy <- lookupVariable moduleName var
+  ty <- introduceSkolemScope <=< replaceAllTypeSynonyms <=< replaceTypeWildcards $ varTy
   case ty of
     ConstrainedType constraints ty' -> do
       dicts <- getTypeClassDictionaries
@@ -326,6 +327,21 @@ inferLetBinding seen (ValueDeclaration ident nameKind [] (Right val) : rest) ret
   TypedValue _ val' valTy' <- bindNames dict $ infer val
   valTy =?= valTy'
   bindNames (M.singleton (moduleName, ident) (valTy', nameKind, Defined)) $ inferLetBinding (seen ++ [ValueDeclaration ident nameKind [] (Right val')]) rest ret j
+inferLetBinding seen (VariableDeclaration ident tv@(TypedValue checkType val ty) : rest) ret j = do
+  Just moduleName <- checkCurrentModule <$> get
+  (kind, args) <- liftCheck $ kindOfWithScopedVars ty
+  checkTypeKind kind
+  let dict = M.singleton (moduleName, ident) (ty, Public, Undefined)
+  ty' <- introduceSkolemScope <=< replaceAllTypeSynonyms <=< replaceTypeWildcards $ ty
+  TypedValue _ val' ty'' <- if checkType then withScopedTypeVars moduleName args (bindNames dict (check val ty')) else return tv
+  bindNames (M.singleton (moduleName, ident) (ty'', Public, Defined)) $ inferLetBinding (seen ++ [VariableDeclaration ident (TypedValue checkType val' ty'')]) rest ret j
+inferLetBinding seen (VariableDeclaration ident val : rest) ret j = do
+  valTy <- fresh
+  Just moduleName <- checkCurrentModule <$> get
+  let dict = M.singleton (moduleName, ident) (valTy, Public, Undefined)
+  TypedValue _ val' valTy' <- bindNames dict $ infer val
+  valTy =?= valTy'
+  bindNames (M.singleton (moduleName, ident) (valTy', Public, Defined)) $ inferLetBinding (seen ++ [VariableDeclaration ident val']) rest ret j
 inferLetBinding seen (BindingGroupDeclaration ds : rest) ret j = do
   Just moduleName <- checkCurrentModule <$> get
   (untyped, typed, dict, untypedDict) <- typeDictionaryForBindingGroup moduleName (map (\(i, _, v) -> (i, v)) ds)

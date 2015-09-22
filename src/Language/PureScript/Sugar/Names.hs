@@ -163,6 +163,7 @@ renameInModule env imports (Module ss coms mn decls exps) =
 
   letBoundVariable :: Declaration -> Maybe Ident
   letBoundVariable (ValueDeclaration ident _ _ _) = Just ident
+  letBoundVariable (VariableDeclaration ident _) = Just ident
   letBoundVariable (PositionedDeclaration _ _ d) = letBoundVariable d
   letBoundVariable _ = Nothing
 

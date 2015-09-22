@@ -131,6 +131,7 @@ library
                      Language.PureScript.Sugar.TypeClasses
                      Language.PureScript.Sugar.TypeClasses.Deriving
                      Language.PureScript.Sugar.TypeDeclarations
+                     Language.PureScript.Sugar.Variables
                      Language.PureScript.Traversals
                      Language.PureScript.TypeChecker
                      Language.PureScript.TypeChecker.Entailment

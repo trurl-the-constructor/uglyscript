@@ -84,6 +84,11 @@ addValue moduleName name ty nameKind = do
   env <- getEnv
   putEnv (env { names = M.insert (moduleName, name) (ty, nameKind, Defined) (names env) })
 
+addVariable :: ModuleName -> Ident -> Type -> Check ()
+addVariable moduleName name ty = do
+  env <- getEnv
+  putEnv (env { names = M.insert (moduleName, name) (ty, Variable, Defined) (names env) })
+
 addTypeClass :: ModuleName -> ProperName -> [(String, Maybe Kind)] -> [Constraint] -> [Declaration] -> Check ()
 addTypeClass moduleName pn args implies ds =
   let members = map toPair ds in
@@ -186,6 +191,12 @@ typeCheckAll mainModuleName moduleName _ ds = mapM go ds <* mapM_ checkOrphanFix
       addValue moduleName name ty nameKind
       return $ ValueDeclaration name nameKind [] $ Right val'
   go (ValueDeclaration{}) = error "Binders were not desugared"
+  go (VariableDeclaration name initialVal) =
+    warnAndRethrow (onErrorMessages (ErrorInValueDeclaration name)) $ do
+      valueIsNotDefined moduleName name
+      [(_, (val', ty))] <- typesOf mainModuleName moduleName [(name, initialVal)]
+      addVariable moduleName name ty
+      return $ VariableDeclaration name val'
   go (BindingGroupDeclaration vals) =
     warnAndRethrow (onErrorMessages (ErrorInBindingGroup (map (\(ident, _, _) -> ident) vals))) $ do
       forM_ (map (\(ident, _, _) -> ident) vals) $ \name ->

@@ -24,6 +24,7 @@ module Language.PureScript.Sugar.DoNotation (
 
 import Language.PureScript.Names
 import Language.PureScript.AST
+import Language.PureScript.Environment (NameKind(..))
 import Language.PureScript.Errors
 
 import qualified Language.PureScript.Constants as C
@@ -47,8 +48,6 @@ desugarDo d =
   let (f, _, _) = everywhereOnValuesM return replace return
   in f d
   where
-  bind :: Expr
-  bind = Var (Qualified Nothing (Ident (C.bind)))
 
   replace :: Expr -> m Expr
   replace (Do els) = go els
@@ -60,16 +59,8 @@ desugarDo d =
   go [DoNotationValue val] = return val
   go (DoNotationValue val : rest) = do
     rest' <- go rest
-    return $ App (App bind val) (Abs (Left (Ident C.__unused)) rest')
-  go [DoNotationBind _ _] = throwError . errorMessage $ InvalidDoBind
-  go (DoNotationBind NullBinder val : rest) = go (DoNotationValue val : rest)
-  go (DoNotationBind (VarBinder ident) val : rest) = do
-    rest' <- go rest
-    return $ App (App bind val) (Abs (Left ident) rest')
-  go (DoNotationBind binder val : rest) = do
-    rest' <- go rest
-    ident <- Ident <$> freshName
-    return $ App (App bind val) (Abs (Left ident) (Case [Var (Qualified Nothing ident)] [CaseAlternative [binder] (Right rest')]))
+    let valueDef = ValueDeclaration (Ident C.__unused) Private [] (Right val)
+    return $ Let [valueDef] rest'
   go [DoNotationLet _] = throwError . errorMessage $ InvalidDoLet
   go (DoNotationLet ds : rest) = do
     rest' <- go rest

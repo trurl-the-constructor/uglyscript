@@ -41,6 +41,8 @@ module Language.PureScript.Parser.Lexer
   , colon
   , doubleColon
   , equals
+  , assign
+  , bang
   , pipe
   , tick
   , dot
@@ -101,6 +103,8 @@ data Token
   | Colon
   | DoubleColon
   | Equals
+  | Assign
+  | Bang
   | Pipe
   | Tick
   | Dot
@@ -131,6 +135,8 @@ prettyPrintToken RFatArrow         = "=>"
 prettyPrintToken Colon             = ":"
 prettyPrintToken DoubleColon       = "::"
 prettyPrintToken Equals            = "="
+prettyPrintToken Assign            = ":="
+prettyPrintToken Bang              = "!"
 prettyPrintToken Pipe              = "|"
 prettyPrintToken Tick              = "`"
 prettyPrintToken Dot               = "."
@@ -188,6 +194,8 @@ parseToken = P.choice
   , P.try $ P.string "->" *> P.notFollowedBy symbolChar *> pure RArrow
   , P.try $ P.string "=>" *> P.notFollowedBy symbolChar *> pure RFatArrow
   , P.try $ P.string "::" *> P.notFollowedBy symbolChar *> pure DoubleColon
+  , P.try $ P.string ":=" *> P.notFollowedBy symbolChar *> pure Assign
+  , P.try $ P.char '!'    *> pure Bang
   , P.try $ P.char '('    *> pure LParen
   , P.try $ P.char ')'    *> pure RParen
   , P.try $ P.char '{'    *> pure LBrace
@@ -349,6 +357,12 @@ doubleColon = match DoubleColon
 equals :: TokenParser ()
 equals = match Equals
 
+assign :: TokenParser ()
+assign = match Assign
+
+bang :: TokenParser ()
+bang = match Bang
+         
 pipe :: TokenParser ()
 pipe = match Pipe
 
@@ -507,6 +521,7 @@ reservedPsNames = [ "data"
                   , "false"
                   , "in"
                   , "where"
+                  , "var"
                   ]
 
 reservedTypeNames :: [String]

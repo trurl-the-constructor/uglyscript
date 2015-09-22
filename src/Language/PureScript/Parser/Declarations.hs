@@ -111,6 +111,16 @@ parseValueDeclaration = do
       C.mark $ P.many1 (C.same *> parseLocalDeclaration)
     return $ maybe value (`Let` value) whereClause
 
+parseVariableDeclaration :: TokenParser Declaration
+parseVariableDeclaration = do
+  reserved "var"
+  ident <- parseIdent
+  optAnnotation <- P.optionMaybe $ doubleColon *> parsePolyType
+  initExpr <- assign *> parseValue
+  return $ VariableDeclaration ident $ case optAnnotation of
+                                         Just ty -> TypedValue True initExpr ty
+                                         Nothing -> initExpr
+                                       
 parseExternDeclaration :: TokenParser Declaration
 parseExternDeclaration = P.try (reserved "foreign") *> indented *> reserved "import" *> indented *>
    (ExternDataDeclaration <$> (P.try (reserved "data") *> indented *> properName)
@@ -254,6 +264,7 @@ parseDeclaration = positioned (P.choice
                    [ parseDataDeclaration
                    , parseTypeDeclaration
                    , parseTypeSynonymDeclaration
+                   , parseVariableDeclaration
                    , parseValueDeclaration
                    , parseExternDeclaration
                    , parseFixityDeclaration
@@ -266,6 +277,7 @@ parseDeclaration = positioned (P.choice
 parseLocalDeclaration :: TokenParser Declaration
 parseLocalDeclaration = positioned (P.choice
                    [ parseTypeDeclaration
+                   , parseVariableDeclaration
                    , parseValueDeclaration
                    ] P.<?> "local declaration")
 
@@ -358,6 +370,18 @@ parseAbs = do
   toFunction :: [Expr -> Expr] -> Expr -> Expr
   toFunction args value = foldr ($) value args
 
+parseAssignVar :: TokenParser Expr
+parseAssignVar = do
+  ident <- C.parseQualified C.parseIdent
+  rhs  <- assign *> parseValue
+  return $ Assign ident rhs
+
+parseReadVar :: TokenParser Expr
+parseReadVar = do
+  bang
+  ident <- C.parseQualified C.parseIdent
+  return $ Read ident
+         
 parseVar :: TokenParser Expr
 parseVar = Var <$> C.parseQualified C.parseIdent
 
@@ -403,6 +427,8 @@ parseValueAtom = P.choice
             , P.try parseObjectGetter
             , parseAbs
             , P.try parseConstructor
+            , P.try parseAssignVar
+            , P.try parseReadVar
             , P.try parseVar
             , parseCase
             , parseIfThenElse

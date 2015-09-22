@@ -68,7 +68,7 @@ createBindingGroups moduleName = mapM f <=< handleDecls
   --
   handleDecls :: (Functor m, MonadError MultipleErrors m) => [Declaration] -> m [Declaration]
   handleDecls ds = do
-    let values = filter isValueDecl ds
+    let values = filter (\d -> isValueDecl d || isVariableDecl d) ds
         dataDecls = filter isDataDecl ds
         allProperNames = map getProperName dataDecls
         dataVerts = map (\d -> (d, getProperName d, usedProperNames moduleName d `intersect` allProperNames)) dataDecls
@@ -145,6 +145,7 @@ usedProperNames moduleName =
 
 getIdent :: Declaration -> Ident
 getIdent (ValueDeclaration ident _ _ _) = ident
+getIdent (VariableDeclaration ident _) = ident
 getIdent (PositionedDeclaration _ _ d) = getIdent d
 getIdent _ = error "Expected ValueDeclaration"
 
