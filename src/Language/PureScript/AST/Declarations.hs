@@ -375,10 +375,6 @@ data Expr
   --
   | Assign (Qualified Ident) Expr
   -- |
-  -- Reading a variable
-  --
-  | Read (Qualified Ident)
-  -- |
   -- Conditional (if-then-else expression)
   --
   | IfThenElse Expr Expr Expr

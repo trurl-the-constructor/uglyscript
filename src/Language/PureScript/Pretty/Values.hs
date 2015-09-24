@@ -76,7 +76,6 @@ literals = mkPattern' match
     , return " := "
     , prettyPrintValue' rhs
     ]
-  match (Read ident) = return $ '!' : show ident
   match (Do els) = concat <$> sequence
     [ return "do\n"
     , withIndent $ prettyPrintMany prettyPrintDoNotationElement els

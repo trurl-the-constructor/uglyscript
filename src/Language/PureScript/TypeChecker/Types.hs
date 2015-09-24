@@ -270,13 +270,21 @@ infer' (App f arg) = do
 infer' (Var var) = do
   Just moduleName <- checkCurrentModule <$> get
   checkVisibility moduleName var
-  varTy <- lookupVariable moduleName var
+  varTy <- getType moduleName var
   ty <- introduceSkolemScope <=< replaceAllTypeSynonyms <=< replaceTypeWildcards $ varTy
   case ty of
     ConstrainedType constraints ty' -> do
       dicts <- getTypeClassDictionaries
       return $ TypedValue True (foldl App (Var var) (map (flip TypeClassDictionary dicts) constraints)) ty'
     _ -> return $ TypedValue True (Var var) ty
+
+infer' (Assign name val) = do
+  Just moduleName <- checkCurrentModule <$> get
+  checkVariable moduleName name
+  TypedValue True _ ty <- infer' (Var name)
+  val' <- check val ty
+  return $ TypedValue True (Assign name val') ty
+
 infer' v@(Constructor c) = do
   env <- getEnv
   case M.lookup c (dataConstructors env) of
@@ -334,14 +342,14 @@ inferLetBinding seen (VariableDeclaration ident tv@(TypedValue checkType val ty)
   let dict = M.singleton (moduleName, ident) (ty, Public, Undefined)
   ty' <- introduceSkolemScope <=< replaceAllTypeSynonyms <=< replaceTypeWildcards $ ty
   TypedValue _ val' ty'' <- if checkType then withScopedTypeVars moduleName args (bindNames dict (check val ty')) else return tv
-  bindNames (M.singleton (moduleName, ident) (ty'', Public, Defined)) $ inferLetBinding (seen ++ [VariableDeclaration ident (TypedValue checkType val' ty'')]) rest ret j
+  bindNames (M.singleton (moduleName, ident) (ty'', Variable, Defined)) $ inferLetBinding (seen ++ [VariableDeclaration ident (TypedValue checkType val' ty'')]) rest ret j
 inferLetBinding seen (VariableDeclaration ident val : rest) ret j = do
   valTy <- fresh
   Just moduleName <- checkCurrentModule <$> get
   let dict = M.singleton (moduleName, ident) (valTy, Public, Undefined)
   TypedValue _ val' valTy' <- bindNames dict $ infer val
   valTy =?= valTy'
-  bindNames (M.singleton (moduleName, ident) (valTy', Public, Defined)) $ inferLetBinding (seen ++ [VariableDeclaration ident val']) rest ret j
+  bindNames (M.singleton (moduleName, ident) (valTy', Variable, Defined)) $ inferLetBinding (seen ++ [VariableDeclaration ident val']) rest ret j
 inferLetBinding seen (BindingGroupDeclaration ds : rest) ret j = do
   Just moduleName <- checkCurrentModule <$> get
   (untyped, typed, dict, untypedDict) <- typeDictionaryForBindingGroup moduleName (map (\(i, _, v) -> (i, v)) ds)
@@ -526,7 +534,7 @@ check' (App f arg) ret = do
 check' v@(Var var) ty = do
   Just moduleName <- checkCurrentModule <$> get
   checkVisibility moduleName var
-  repl <- introduceSkolemScope <=< replaceAllTypeSynonyms <=< lookupVariable moduleName $ var
+  repl <- introduceSkolemScope <=< replaceAllTypeSynonyms <=< getType moduleName $ var
   ty' <- introduceSkolemScope <=< replaceAllTypeSynonyms <=< replaceTypeWildcards $ ty
   v' <- subsumes (Just v) repl ty'
   case v' of

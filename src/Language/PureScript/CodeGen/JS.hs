@@ -44,6 +44,7 @@ import Language.PureScript.CoreFn
 import Language.PureScript.Names
 import Language.PureScript.CodeGen.JS.Optimizer
 import Language.PureScript.Options
+import qualified Language.PureScript.Primitives as Prim (newVarSymbol, writeVarSymbol)
 import Language.PureScript.Traversals (sndM)
 import qualified Language.PureScript.Constants as C
 
@@ -59,11 +60,12 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ = do
   jsImports <- T.traverse importToJs . delete (ModuleName [ProperName C.prim]) . (\\ [mn]) $ imps
   jsDecls <- mapM bindToJs decls
   optimized <- T.traverse (T.traverse optimize) jsDecls
+  let desugared = map (everywhereOnJS desugarVars) (concat optimized)
   comments <- not <$> asks optionsNoComments
   let strict = JSStringLiteral "use strict"
   let header = if comments && not (null coms) then JSComment coms strict else strict
   let foreign' = [JSVariableIntroduction "$foreign" foreign_ | not $ null foreigns || foreign_ == Nothing]
-  let moduleBody = header : foreign' ++ jsImports ++ concat optimized
+  let moduleBody = header : foreign' ++ jsImports ++ desugared
   let foreignExps = exps `intersect` (fst `map` foreigns)
   let standardExps = exps \\ foreignExps
   let exps' = JSObjectLiteral $ map (runIdent &&& JSVar . identToJs) standardExps
@@ -163,6 +165,7 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ = do
       Var (_, _, _, Just IsTypeClassConstructor) name ->
         return $ JSUnary JSNew $ JSApp (qualifiedToJS id name) args'
       _ -> flip (foldl (\fn a -> JSApp fn [a])) args' <$> valueToJs f
+
     where
     unApp :: Expr Ann -> [Expr Ann] -> (Expr Ann, [Expr Ann])
     unApp (App _ val arg) args = unApp val (arg : args)
@@ -357,6 +360,16 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ = do
       done'' <- go done' (index + 1) bs'
       js <- binderToJs elVar done'' binder
       return (JSVariableIntroduction elVar (Just (JSIndexer (JSNumericLiteral (Left index)) (JSVar varName))) : js)
+
+  desugarVars :: JS -> JS
+  desugarVars js@(JSApp (JSVar name) [arg])
+      | name == Prim.newVarSymbol = arg
+      | otherwise                 = js
+  desugarVars js@(JSApp (JSApp (JSVar name) [v]) [arg])
+      | name == Prim.writeVarSymbol = JSAssignment v arg
+      | otherwise                   = js
+  desugarVars js = js
+
 
 mainCall :: ModuleName -> String -> JS
 mainCall mmi ns = JSApp (JSAccessor C.main (JSAccessor (moduleNameToJs mmi) (JSVar ns))) []

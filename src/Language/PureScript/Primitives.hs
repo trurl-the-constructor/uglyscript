@@ -1,6 +1,7 @@
 module Language.PureScript.Primitives  where
 
 import qualified Language.PureScript.Constants as C
+import Language.PureScript.AST.Declarations (Expr(..))
 import Language.PureScript.Environment
 import Language.PureScript.Kinds
 import Language.PureScript.Names
@@ -105,43 +106,47 @@ primTypes = M.fromList [ (primName "Function" , (FunKind Star (FunKind Star Star
                        , (primName "Int"      , (Star, ExternData))
                        , (primName "Boolean"  , (Star, ExternData)) ]
 
-newVarIdent :: Ident
-newVarIdent = Ident "newVar"
-            
+
+newVarSymbol :: String
+newVarSymbol = "$newVar"
+
+writeVarSymbol :: String
+writeVarSymbol = "$writeVar"
+
 primValues :: M.Map (ModuleName, Ident) (Type, NameKind, NameVisibility)
 primValues = M.fromList [
-                   ((primValueName "newVar"),   (newVarType, Public, Defined)),
-                   ((primValueName "readVar"),  (readVarType, Public, Defined)),
-                   ((primValueName "writeVar"), (writeVarType, Public, Defined))
+                   ((primValueName newVarSymbol),   (newVarType, Public, Defined)),
+                   ((primValueName writeVarSymbol), (writeVarType, Public, Defined))
                   ]
     where
       primValueName :: String -> (ModuleName, Ident)
       primValueName name = (ModuleName [ProperName C.prim], Ident name)
           
-      newVarType, readVarType, writeVarType :: Type
-      newVarType = ForAll "a" -- forall a. a -> $Var a
-                   (function (TypeVar "a") (TypeApp varTyCon (TypeVar "a")))
-                   Nothing 
-      readVarType = ForAll "a" -- forall a. $Var a -> a
-                    (function (TypeApp varTyCon (TypeVar "a")) (TypeVar "a"))
-                    Nothing
-      writeVarType = ForAll "a" -- forall a. $Var a -> a -> a
-                     (function (TypeApp varTyCon (TypeVar "a")) (function (TypeVar "a") (TypeVar "a")))
-                     Nothing 
+      newVarType, writeVarType :: Type
+      newVarType = ForAll "a" ((TypeVar "a") `function` (TypeVar "a")) Nothing
+      writeVarType = ForAll "a" ((TypeVar "a") `function` ((TypeVar "a") `function` (TypeVar "a"))) Nothing
 
-            
+primValue :: String -> Qualified Ident
+primValue = Qualified (Just (ModuleName [ProperName C.prim])) . Ident
+
+newVarCall :: Expr -> Expr
+newVarCall expr = (Var $ primValue newVarSymbol) `App` expr
+
+writeVarCall :: Qualified Ident -> Expr -> Expr
+writeVarCall ident expr = (Var $ primValue writeVarSymbol) `App` (Var ident) `App` expr
+
+
 -- |
 -- The initial environment with no values and only the default javascript types defined
 --
 initEnvironment :: Environment
 initEnvironment = Environment {
                     names = primValues,
-                    types = M.insert (primName "Var") (FunKind Star Star, ExternData) primTypes,
+                    types = primTypes,
                     dataConstructors = M.empty,
                     typeSynonyms = M.empty,
                     typeClassDictionaries = M.empty,
                     typeClasses = M.empty
                   }
 
-varTyCon :: Type
-varTyCon = TypeConstructor (primName "Var")
+

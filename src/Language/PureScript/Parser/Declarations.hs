@@ -370,18 +370,12 @@ parseAbs = do
   toFunction :: [Expr -> Expr] -> Expr -> Expr
   toFunction args value = foldr ($) value args
 
-parseAssignVar :: TokenParser Expr
-parseAssignVar = do
+parseAssign :: TokenParser Expr
+parseAssign = do
   ident <- C.parseQualified C.parseIdent
   rhs  <- assign *> parseValue
   return $ Assign ident rhs
 
-parseReadVar :: TokenParser Expr
-parseReadVar = do
-  bang
-  ident <- C.parseQualified C.parseIdent
-  return $ Read ident
-         
 parseVar :: TokenParser Expr
 parseVar = Var <$> C.parseQualified C.parseIdent
 
@@ -427,8 +421,7 @@ parseValueAtom = P.choice
             , P.try parseObjectGetter
             , parseAbs
             , P.try parseConstructor
-            , P.try parseAssignVar
-            , P.try parseReadVar
+            , P.try parseAssign
             , P.try parseVar
             , parseCase
             , parseIfThenElse

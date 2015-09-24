@@ -130,32 +130,45 @@ preservingNames action = do
 -- |
 -- Lookup the type of a value by name in the @Environment@
 --
-lookupVariable :: (e ~ MultipleErrors, Functor m, MonadState CheckState m, MonadError e m) => ModuleName -> Qualified Ident -> m Type
-lookupVariable currentModule (Qualified moduleName var) = do
+lookupName :: (e ~ MultipleErrors, Functor m, MonadState CheckState m, MonadError e m) => ModuleName -> Qualified Ident -> m (Type, NameKind, NameVisibility)
+lookupName currentModule (Qualified moduleName ident) = do
   env <- getEnv
-  case M.lookup (fromMaybe currentModule moduleName, var) (names env) of
-    Nothing -> throwError . errorMessage $ NameIsUndefined var
-    Just (ty, _, _) -> return ty
+  case M.lookup (fromMaybe currentModule moduleName, ident) (names env) of
+    Nothing -> throwError . errorMessage $ NameIsUndefined ident
+    Just info -> return info
+
+getType :: (e ~ MultipleErrors, Functor m, MonadState CheckState m, MonadError e m) => ModuleName -> Qualified Ident -> m Type
+getType currentModule name = do
+  (ty, _, _) <- lookupName currentModule name
+  return ty
 
 -- |
 -- Lookup the visibility of a value by name in the @Environment@
 --
 getVisibility :: (e ~ MultipleErrors, Functor m, MonadState CheckState m, MonadError e m) => ModuleName -> Qualified Ident -> m NameVisibility
-getVisibility currentModule (Qualified moduleName var) = do
-  env <- getEnv
-  case M.lookup (fromMaybe currentModule moduleName, var) (names env) of
-    Nothing -> throwError . errorMessage $ NameIsUndefined var
-    Just (_, _, vis) -> return vis
+getVisibility currentModule name = do
+  (_, _, vis) <- lookupName currentModule name
+  return vis
 
 -- |
 -- Assert that a name is visible
 --
 checkVisibility :: (e ~ MultipleErrors, Functor m, MonadState CheckState m, MonadError e m) => ModuleName -> Qualified Ident -> m ()
-checkVisibility currentModule name@(Qualified _ var) = do
+checkVisibility currentModule name@(Qualified _ ident) = do
   vis <- getVisibility currentModule name
   case vis of
-    Undefined -> throwError . errorMessage $ NameNotInScope var
+    Undefined -> throwError . errorMessage $ NameNotInScope ident
     _ -> return ()
+
+-- |
+-- Assert that a name refers to a variable
+--
+checkVariable :: (e ~ MultipleErrors, Functor m, MonadState CheckState m, MonadError e m) => ModuleName -> Qualified Ident -> m ()
+checkVariable currentModule name@(Qualified _ ident) = do
+  (_, kind, _) <- lookupName currentModule name
+  case kind of
+    Variable -> return ()
+    _ -> throwError . errorMessage $ NameIsNotVariable ident
 
 -- |
 -- Lookup the kind of a type by name in the @Environment@

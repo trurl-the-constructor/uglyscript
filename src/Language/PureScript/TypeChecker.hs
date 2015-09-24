@@ -298,7 +298,7 @@ typeCheckModule mainModuleName (Module ss coms mn decls (Just exps)) = warnAndRe
 
   checkMemberExport :: (Type -> [DeclarationRef]) -> DeclarationRef -> Check ()
   checkMemberExport extract dr@(ValueRef name) = do
-    ty <- lookupVariable mn (Qualified (Just mn) name)
+    ty <- getType mn (Qualified (Just mn) name)
     case filter (not . exported) (extract ty) of
       [] -> return ()
       hidden -> throwError . errorMessage $ TransitiveExportError dr hidden

@@ -31,7 +31,7 @@ import Language.PureScript.CoreFn.Meta
 import Language.PureScript.CoreFn.Module
 import Language.PureScript.Environment
 import Language.PureScript.Names
-import Language.PureScript.Primitives
+import qualified Language.PureScript.Primitives as Prim
 import Language.PureScript.Sugar.TypeClasses (typeClassMemberName, superClassDictionaryNames)
 import Language.PureScript.Types
 import Language.PureScript.Comments
@@ -58,7 +58,7 @@ moduleToCoreFn env (A.Module _ coms mn decls (Just exps)) =
   declToCoreFn :: Maybe SourceSpan -> [Comment] -> A.Declaration -> [Bind Ann]
   declToCoreFn ss com (A.DataDeclaration Newtype _ _ [(ctor, _)]) =
     [NonRec (properToIdent ctor) $
-      Abs (ss, com, Nothing, Just IsNewtype) (Ident "x") (Var nullAnn $ Qualified Nothing (Ident "x"))]
+       Abs (ss, com, Nothing, Just IsNewtype) (Ident "x") (Var nullAnn $ Qualified Nothing (Ident "x"))]
   declToCoreFn _ _ d@(A.DataDeclaration Newtype _ _ _) =
     error $ "Found newtype with multiple constructors: " ++ show d
   declToCoreFn ss com (A.DataDeclaration Data tyName _ ctors) =
@@ -68,8 +68,12 @@ moduleToCoreFn env (A.Module _ coms mn decls (Just exps)) =
   declToCoreFn ss _   (A.DataBindingGroupDeclaration ds) = concatMap (declToCoreFn ss []) ds
   declToCoreFn ss com (A.ValueDeclaration name _ _ (Right e)) =
     [NonRec name (exprToCoreFn ss com Nothing e)]
-  declToCoreFn ss com (A.VariableDeclaration name e) =
-    [NonRec name (exprToCoreFn ss com Nothing e)]
+  declToCoreFn ss com (A.VariableDeclaration name (A.TypedValue check expr ty)) =
+      let rhs = A.TypedValue check (Prim.newVarCall expr) ty
+      in  [NonRec name (exprToCoreFn ss com Nothing rhs)]
+  declToCoreFn ss com (A.VariableDeclaration name expr) =
+      let expr' = Prim.newVarCall expr
+      in  [NonRec name (exprToCoreFn ss com Nothing expr')]
   declToCoreFn ss _   (A.BindingGroupDeclaration ds) =
     [Rec $ map (\(name, _, e) -> (name, exprToCoreFn ss [] Nothing e)) ds]
   declToCoreFn ss com (A.TypeClassDeclaration name _ supers members) =
@@ -120,6 +124,8 @@ moduleToCoreFn env (A.Module _ coms mn decls (Just exps)) =
     exprToCoreFn ss com (Just ty) v
   exprToCoreFn ss com ty (A.Let ds v) =
     Let (ss, com, ty, Nothing) (concatMap (declToCoreFn ss []) ds) (exprToCoreFn ss [] Nothing v)
+  exprToCoreFn ss com ty (A.Assign name expr) =
+    exprToCoreFn ss com ty (Prim.writeVarCall name expr)
   exprToCoreFn ss com _  (A.TypeClassDictionaryConstructorApp name (A.TypedValue _ (A.ObjectLiteral vs) _)) =
     let args = map (exprToCoreFn ss [] Nothing . snd) $ sortBy (compare `on` fst) vs
         ctor = Var (ss, [], Nothing, Just IsTypeClassConstructor) (fmap properToIdent name)
@@ -228,7 +234,7 @@ importToCoreFn _ = Nothing
 --
 externToCoreFn :: A.Declaration -> Maybe ForeignDecl
 externToCoreFn (A.ExternDeclaration name ty) = Just (name, ty)
-externToCoreFn (A.ExternInstanceDeclaration name _ _ _) = Just (name, tyObject)
+externToCoreFn (A.ExternInstanceDeclaration name _ _ _) = Just (name, Prim.tyObject)
 externToCoreFn (A.PositionedDeclaration _ _ d) = externToCoreFn d
 externToCoreFn _ = Nothing
 

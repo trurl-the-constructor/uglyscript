@@ -110,6 +110,7 @@ data SimpleErrorMessage
   | CycleInModules [ModuleName]
   | NameIsUndefined Ident
   | NameNotInScope Ident
+  | NameIsNotVariable Ident
   | UndefinedTypeVariable ProperName
   | PartiallyAppliedSynonym (Qualified ProperName)
   | EscapedSkolem (Maybe Expr)
@@ -236,6 +237,7 @@ errorCode em = case unwrapErrorMessage em of
   CycleInModules{} -> "CycleInModules"
   NameIsUndefined{} -> "NameIsUndefined"
   NameNotInScope{} -> "NameNotInScope"
+  NameIsNotVariable{} -> "NameIsNotVariable"
   UndefinedTypeVariable{} -> "UndefinedTypeVariable"
   PartiallyAppliedSynonym{} -> "PartiallyAppliedSynonym"
   EscapedSkolem{} -> "EscapedSkolem"
@@ -531,6 +533,8 @@ prettyPrintSingleError full level e = prettyPrintErrorMessage <$> onTypesInError
       line $ show ident ++ " is undefined"
     goSimple (NameNotInScope ident) =
       line $ show ident ++ " may not be defined in the current scope"
+    goSimple (NameIsNotVariable ident) =
+      line $ show ident ++ " is not a variable"
     goSimple (UndefinedTypeVariable name) =
       line $ "Type variable " ++ show name ++ " is undefined"
     goSimple (PartiallyAppliedSynonym name) =

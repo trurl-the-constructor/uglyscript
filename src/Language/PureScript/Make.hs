@@ -59,6 +59,8 @@ import Data.Version (showVersion)
 import qualified Data.Map as M
 import qualified Data.Set as S
 
+import qualified Debug.Trace as Trace
+
 import System.Directory
        (doesFileExist, getModificationTime, createDirectoryIfMissing)
 import System.FilePath ((</>), takeDirectory)
@@ -74,6 +76,7 @@ import Language.PureScript.Names
 import Language.PureScript.Options
 import Language.PureScript.Parser
 import Language.PureScript.Pretty
+import Language.PureScript.Pretty.CoreFn
 import Language.PureScript.Primitives
 import Language.PureScript.Renamer
 import Language.PureScript.Sugar
@@ -182,6 +185,11 @@ make MakeActions{..} ms = do
         corefn = CF.moduleToCoreFn env' mod'
         [renamed] = renameInModules [corefn]
         exts = moduleToPs mod' env'
+    --
+    Trace.traceM ("\nRenamed core module " ++ show moduleName' ++ ":\n")
+    Trace.traceM (prettyPrintModule renamed)
+    --
+
     codegen renamed env' exts
     go env' ms'
 
