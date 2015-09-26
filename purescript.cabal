@@ -114,6 +114,7 @@ library
                      Language.PureScript.Pretty.CoreFn
                      Language.PureScript.Pretty.JS
                      Language.PureScript.Pretty.Kinds
+                     Language.PureScript.Pretty.Module
                      Language.PureScript.Pretty.Types
                      Language.PureScript.Pretty.Values
                      Language.PureScript.Primitives
@@ -131,7 +132,6 @@ library
                      Language.PureScript.Sugar.TypeClasses
                      Language.PureScript.Sugar.TypeClasses.Deriving
                      Language.PureScript.Sugar.TypeDeclarations
-                     Language.PureScript.Sugar.Variables
                      Language.PureScript.Traversals
                      Language.PureScript.TypeChecker
                      Language.PureScript.TypeChecker.Entailment

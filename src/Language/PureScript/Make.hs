@@ -168,6 +168,10 @@ make MakeActions{..} ms = do
   marked <- rebuildIfNecessary (reverseDependencies graph) toRebuild sorted
   for_ marked $ \(willRebuild, m) -> when willRebuild (lint m)
   (desugared, nextVar) <- runSupplyT 0 $ zip (map fst marked) <$> desugar (map snd marked)
+  --
+  Trace.traceM ("\nDesugared module:\n")
+  Trace.traceM (prettyPrintModule (snd (head desugared)))
+  --
   evalSupplyT nextVar $ go initEnvironment desugared
   where
 
@@ -187,7 +191,7 @@ make MakeActions{..} ms = do
         exts = moduleToPs mod' env'
     --
     Trace.traceM ("\nRenamed core module " ++ show moduleName' ++ ":\n")
-    Trace.traceM (prettyPrintModule renamed)
+    Trace.traceM (prettyPrintCoreModule renamed)
     --
 
     codegen renamed env' exts
