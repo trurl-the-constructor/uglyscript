@@ -50,6 +50,9 @@ import qualified Language.PureScript.Constants as C
 
 import System.FilePath.Posix ((</>))
 
+import Prelude hiding (seq)
+
+
 -- |
 -- Generate code in the simplified Javascript intermediate representation for all declarations in a
 -- module.
@@ -127,6 +130,22 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ = do
                       | otherwise = JSAccessor prop
 
   -- |
+  -- Generate Javascript code for a sequence expression
+  seqToJs :: Expr Ann -> m JS
+  seqToJs (Seq _ [])   = return $ JSBlock [JSReturn (JSObjectLiteral [])]
+  seqToJs (Seq _ vals) = do
+    js  <- mapM valueToJs (init vals)
+    ret <- seqToJs (last vals)
+    return $ JSBlock (js ++ [ret])
+  seqToJs (Let _ ds val) = do
+    ds' <- concat <$> mapM bindToJs ds
+    ret <- seqToJs val
+    return $ JSBlock (ds' ++ [ret])
+  seqToJs val = do
+    js <- valueToJs val
+    return $ JSBlock [JSReturn js]
+
+  -- |
   -- Generate code in the simplified Javascript intermediate representation for a value or expression.
   --
   valueToJs :: Expr Ann -> m JS
@@ -152,9 +171,12 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ = do
     assign :: Ident -> JS
     assign name = JSAssignment (accessorString (runIdent name) (JSVar "this"))
                                (var name)
+  valueToJs (Abs _ arg seq@(Seq _ vals)) = do
+    js <- mapM valueToJs vals
+    return $ JSFunction Nothing [identToJs arg] (JSBlock (init js ++ [JSReturn (last js)]))
   valueToJs (Abs _ arg val) = do
-    ret <- valueToJs val
-    return $ JSFunction Nothing [identToJs arg] (JSBlock [JSReturn ret])
+    js <- valueToJs val
+    return $ JSFunction Nothing [identToJs arg] (JSBlock [JSReturn js])
   valueToJs e@App{} = do
     let (f, args) = unApp e []
     args' <- mapM valueToJs args
@@ -185,6 +207,10 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ = do
     ds' <- concat <$> mapM bindToJs ds
     ret <- valueToJs val
     return $ JSApp (JSFunction Nothing [] (JSBlock (ds' ++ [JSReturn ret]))) []
+  valueToJs (Seq _ []) = return $ JSReturn (JSObjectLiteral [])
+  valueToJs (Seq _ vals) = do
+    js <- mapM valueToJs vals
+    return $ JSApp (JSFunction Nothing [] (JSBlock (init js ++ [JSReturn (last js)]))) []
   valueToJs (Constructor (_, _, _, Just IsNewtype) _ (ProperName ctor) _) =
     return $ JSVariableIntroduction ctor (Just $
                 JSObjectLiteral [("create",

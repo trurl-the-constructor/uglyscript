@@ -22,12 +22,8 @@ module Language.PureScript.Sugar.DoNotation (
     desugarDoModule
 ) where
 
-import Language.PureScript.Names
 import Language.PureScript.AST
-import Language.PureScript.Environment (NameKind(..))
 import Language.PureScript.Errors
-
-import qualified Language.PureScript.Constants as C
 
 #if __GLASGOW_HASKELL__ < 710
 import Control.Applicative
@@ -58,9 +54,10 @@ desugarDo d =
   go [] = error "The impossible happened in desugarDo"
   go [DoNotationValue val] = return val
   go (DoNotationValue val : rest) = do
-    rest' <- go rest
-    let valueDef = ValueDeclaration (Ident C.__unused) Private [] (Right val)
-    return $ Let [valueDef] rest'
+    desugared <- go rest
+    case desugared of
+      Seq exprs -> return $ Seq (val : exprs)
+      expr      -> return $ Seq [val, expr]
   go [DoNotationLet _] = throwError . errorMessage $ InvalidDoLet
   go (DoNotationLet ds : rest) = do
     rest' <- go rest

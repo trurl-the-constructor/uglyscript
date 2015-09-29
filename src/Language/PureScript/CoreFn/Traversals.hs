@@ -36,6 +36,7 @@ everywhereOnValues f g h = (f', g', h')
   g' (App ann v1 v2) = g (App ann (g' v1) (g' v2))
   g' (Case ann vs alts) = g (Case ann (map g' vs) (map handleCaseAlternative alts))
   g' (Let ann ds e) = g (Let ann (map f' ds) (g' e))
+  g' (Seq ann es) = g (Seq ann (map g' es))
   g' e = g e
 
   h' (LiteralBinder a b) = h (LiteralBinder a (handleLiteral h' b))
@@ -70,6 +71,7 @@ everythingOnValues (<>) f g h i = (f', g', h', i')
   g' v@(App _ e1 e2) = g v <> g' e1 <> g' e2
   g' v@(Case _ vs alts) = foldl (<>) (foldl (<>) (g v) (map g' vs)) (map i' alts)
   g' v@(Let _ ds e1) = foldl (<>) (g v) (map f' ds) <> g' e1
+  g' v@(Seq _ es) = foldl (<>) (g v) (map g' es)
   g' v = g v
 
   h' b@(LiteralBinder _ l) = foldl (<>) (h b) (map h' (extractLiteral l))

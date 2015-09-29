@@ -305,6 +305,10 @@ infer' (IfThenElse cond th el) = do
 infer' (Let ds val) = do
   (ds', val'@(TypedValue _ _ valTy)) <- inferLetBinding [] ds val infer
   return $ TypedValue True (Let ds' val') valTy
+infer' (Seq vals) = do
+  vals' <- mapM infer vals
+  let (TypedValue _ _ ty) = last vals'
+  return $ TypedValue True (Seq vals') ty
 infer' (SuperClassDictionary className tys) = do
   dicts <- getTypeClassDictionaries
   return $ TypeClassDictionary (className, tys) dicts

@@ -396,6 +396,10 @@ data Expr
   --
   | Let [Declaration] Expr
   -- |
+  -- Sequential composition
+  --
+  | Seq [Expr]
+  -- |
   -- A do-notation block
   --
   | Do [DoNotationElement]

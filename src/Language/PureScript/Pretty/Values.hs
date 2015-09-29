@@ -71,6 +71,11 @@ literals = mkPattern' match
     , return "in "
     , prettyPrintValue' val
     ]
+  match (Seq vals) = concat <$> sequence
+    [ return "seq\n"
+    , withIndent $ prettyPrintMany prettyPrintValue' vals
+    , currentIndent
+    ]
   match (Var ident) = return $ show ident
   match (Assign ident rhs) = concat <$> sequence
     [ return $ show ident

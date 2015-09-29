@@ -124,6 +124,8 @@ moduleToCoreFn env (A.Module _ coms mn decls (Just exps)) =
     exprToCoreFn ss com (Just ty) v
   exprToCoreFn ss com ty (A.Let ds v) =
     Let (ss, com, ty, Nothing) (concatMap (declToCoreFn ss []) ds) (exprToCoreFn ss [] Nothing v)
+  exprToCoreFn ss com ty (A.Seq vs) =
+    Seq (ss, com, ty, Nothing) (map (exprToCoreFn ss [] Nothing) vs)
   exprToCoreFn ss com ty (A.Assign name expr) =
     exprToCoreFn ss com ty (Prim.writeVarCall name expr)
   exprToCoreFn ss com _  (A.TypeClassDictionaryConstructorApp name (A.TypedValue _ (A.ObjectLiteral vs) _)) =
