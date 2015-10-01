@@ -607,6 +607,10 @@ check' (Constructor c) ty = do
 check' (Let ds val) ty = do
   (ds', val') <- inferLetBinding [] ds val (`check` ty)
   return $ TypedValue True (Let ds' val') ty
+check' seq@(Seq vals) ty = do
+  initVals <- mapM infer (init vals)
+  lastVal  <- check' (last vals) ty
+  return $ TypedValue True (Seq (initVals  ++ [lastVal])) ty
 check' val ty | containsTypeSynonyms ty = do
   ty' <- introduceSkolemScope <=< expandAllTypeSynonyms <=< replaceTypeWildcards $ ty
   check val ty'
