@@ -168,8 +168,8 @@ renameInValue (Case ann vs alts) =
   newScope $ Case ann <$> mapM renameInValue vs <*> mapM renameInCaseAlternative alts
 renameInValue (Let ann ds v) =
   newScope $ Let ann <$> mapM (renameInDecl False) ds <*> renameInValue v
-renameInValue (Seq ann vs) =
-  Seq ann <$> mapM renameInValue vs
+renameInValue (Seq ann v1 v2) =
+  Seq ann <$> renameInValue v1 <*> renameInValue v2
 
 -- |
 -- Renames within literals.

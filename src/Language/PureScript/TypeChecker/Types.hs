@@ -38,6 +38,8 @@ module Language.PureScript.TypeChecker.Types (
       Check a function of a given type returns a value of another type when applied to its arguments
 -}
 
+import Prelude hiding (seq)
+
 import Data.Either (lefts, rights)
 import Data.List
 import Data.Maybe (fromMaybe)
@@ -305,10 +307,10 @@ infer' (IfThenElse cond th el) = do
 infer' (Let ds val) = do
   (ds', val'@(TypedValue _ _ valTy)) <- inferLetBinding [] ds val infer
   return $ TypedValue True (Let ds' val') valTy
-infer' (Seq vals) = do
-  vals' <- mapM infer vals
-  let (TypedValue _ _ ty) = last vals'
-  return $ TypedValue True (Seq vals') ty
+infer' (Seq v1 v2) = do
+  v1' <- infer v1
+  v2'@(TypedValue _ _ ty) <- infer v2
+  return $ TypedValue True (Seq v1' v2') ty
 infer' (SuperClassDictionary className tys) = do
   dicts <- getTypeClassDictionaries
   return $ TypeClassDictionary (className, tys) dicts
@@ -607,10 +609,10 @@ check' (Constructor c) ty = do
 check' (Let ds val) ty = do
   (ds', val') <- inferLetBinding [] ds val (`check` ty)
   return $ TypedValue True (Let ds' val') ty
-check' seq@(Seq vals) ty = do
-  initVals <- mapM infer (init vals)
-  lastVal  <- check' (last vals) ty
-  return $ TypedValue True (Seq (initVals  ++ [lastVal])) ty
+check' seq@(Seq v1 v2) ty = do
+  v1' <- infer v1
+  v2' <- check' v2 ty
+  return $ TypedValue True (Seq v1' v2') ty
 check' val ty | containsTypeSynonyms ty = do
   ty' <- introduceSkolemScope <=< expandAllTypeSynonyms <=< replaceTypeWildcards $ ty
   check val ty'

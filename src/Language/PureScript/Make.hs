@@ -169,8 +169,8 @@ make MakeActions{..} ms = do
   for_ marked $ \(willRebuild, m) -> when willRebuild (lint m)
   (desugared, nextVar) <- runSupplyT 0 $ zip (map fst marked) <$> desugar (map snd marked)
   --
-  Trace.traceM ("\nDesugared module:\n")
-  Trace.traceM (prettyPrintModule (snd (head desugared)))
+  -- Trace.traceM ("\nDesugared module:\n")
+  -- Trace.traceM (prettyPrintModule (snd (head desugared)))
   --
   evalSupplyT nextVar $ go initEnvironment desugared
   where

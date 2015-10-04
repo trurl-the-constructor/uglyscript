@@ -68,7 +68,7 @@ data Expr a
   -- |
   -- Sequence
   --
-  | Seq a [Expr a]
+  | Seq a (Expr a) (Expr a)
     deriving (Show, D.Data, D.Typeable, Functor)
 
 -- |
@@ -122,7 +122,7 @@ extractAnn (App a _ _) = a
 extractAnn (Var a _) = a
 extractAnn (Case a _ _) = a
 extractAnn (Let a _ _) = a
-extractAnn (Seq a _) = a
+extractAnn (Seq a _ _) = a
 
 -- |
 -- Modify the annotation on a term
@@ -137,5 +137,5 @@ modifyAnn f (App a b c)           = App (f a) b c
 modifyAnn f (Var a b)             = Var (f a) b
 modifyAnn f (Case a b c)          = Case (f a) b c
 modifyAnn f (Let a b c)           = Let (f a) b c
-modifyAnn f (Seq a b)             = Seq (f a) b
+modifyAnn f (Seq a b c)           = Seq (f a) b c
                                               

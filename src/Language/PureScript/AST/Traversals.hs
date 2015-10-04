@@ -70,7 +70,7 @@ everywhereOnValues f g h = (f', g', h')
   g' (Case vs alts) = g (Case (map g' vs) (map handleCaseAlternative alts))
   g' (TypedValue check v ty) = g (TypedValue check (g' v) ty)
   g' (Let ds v) = g (Let (map f' ds) (g' v))
-  g' (Seq vs) = g (Seq (map g' vs))
+  g' (Seq v1 v2) = g (Seq (g' v1) (g' v2))
   g' (Do es) = g (Do (map handleDoNotationElement es))
   g' (Assign name v) = g (Assign name (g' v))
   g' (PositionedValue pos com v) = g (PositionedValue pos com (g' v))
@@ -130,7 +130,7 @@ everywhereOnValuesTopDownM f g h = (f' <=< f, g' <=< g, h' <=< h)
   g' (Case vs alts) = Case <$> mapM (g' <=< g) vs <*> mapM handleCaseAlternative alts
   g' (TypedValue check v ty) = TypedValue check <$> (g v >>= g') <*> pure ty
   g' (Let ds v) = Let <$> mapM (f' <=< f) ds <*> (g v >>= g')
-  g' (Seq vs) = Seq <$> mapM (g' <=< g) vs
+  g' (Seq v1 v2) = Seq <$> (g v1 >>= g') <*> (g v2 >>= g')
   g' (Do es) = Do <$> mapM handleDoNotationElement es
   g' (Assign name v) = Assign name <$> (g v >>= g')
   g' (PositionedValue pos com v) = PositionedValue pos com <$> (g v >>= g')
@@ -185,7 +185,7 @@ everywhereOnValuesM f g h = (f', g', h')
   g' (Case vs alts) = (Case <$> mapM g' vs <*> mapM handleCaseAlternative alts) >>= g
   g' (TypedValue check v ty) = (TypedValue check <$> g' v <*> pure ty) >>= g
   g' (Let ds v) = (Let <$> mapM f' ds <*> g' v) >>= g
-  g' (Seq vs) = (Seq <$> mapM g' vs) >>= g
+  g' (Seq v1 v2) = (Seq <$> g' v1 <*> g' v2) >>= g
   g' (Do es) = (Do <$> mapM handleDoNotationElement es) >>= g
   g' (Assign name v) = (Assign name <$> g' v) >>= g
   g' (PositionedValue pos com v) = (PositionedValue pos com <$> g' v) >>= g
@@ -243,7 +243,7 @@ everythingOnValues (<>) f g h i j = (f', g', h', i', j')
   g' v@(Case vs alts) = foldl (<>) (foldl (<>) (g v) (map g' vs)) (map i' alts)
   g' v@(TypedValue _ v1 _) = g v <> g' v1
   g' v@(Let ds v1) = foldl (<>) (g v) (map f' ds) <> g' v1
-  g' v@(Seq vs) = foldl (<>) (g v) (map g' vs)
+  g' v@(Seq v1 v2) = g v <> g' v1 <> g' v2
   g' v@(Do es) = foldl (<>) (g v) (map j' es)
   g' v@(Assign _ v1) = g v <> g' v1
   g' v@(PositionedValue _ _ v1) = g v <> g' v1
@@ -312,7 +312,7 @@ everythingWithContextOnValues s0 r0 (<>) f g h i j = (f'' s0, g'' s0, h'' s0, i'
   g' s (Case vs alts) = foldl (<>) (foldl (<>) r0 (map (g'' s) vs)) (map (i'' s) alts)
   g' s (TypedValue _ v1 _) = g'' s v1
   g' s (Let ds v1) = foldl (<>) r0 (map (f'' s) ds) <> g'' s v1
-  g' s (Seq vs) = foldl (<>) r0 (map (g'' s) vs)
+  g' s (Seq v1 v2) = g'' s v1 <> g'' s v2
   g' s (Do es) = foldl (<>) r0 (map (j'' s) es)
   g' s (Assign _ v1) = g'' s v1
   g' s (PositionedValue _ _ v1) = g'' s v1
@@ -384,7 +384,7 @@ everywhereWithContextOnValuesM s0 f g h i j = (f'' s0, g'' s0, h'' s0, i'' s0, j
   g' s (Case vs alts) = Case <$> mapM (g'' s) vs <*> mapM (i'' s) alts
   g' s (TypedValue check v ty) = TypedValue check <$> g'' s v <*> pure ty
   g' s (Let ds v) = Let <$> mapM (f'' s) ds <*> g'' s v
-  g' s (Seq vs) = Seq <$> mapM (g'' s) vs
+  g' s (Seq v1 v2) = Seq <$> g'' s v1 <*> g'' s v2
   g' s (Do es) = Do <$> mapM (j'' s) es
   g' s (Assign name v) = Assign name <$> g'' s v
   g' s (PositionedValue pos com v) = PositionedValue pos com <$> g'' s v

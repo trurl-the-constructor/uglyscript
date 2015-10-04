@@ -187,9 +187,8 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ = do
   valueToJs val@(Let {}) = do
     jsBlock@(JSBlock{}) <- valueToJsReturn val
     return $ JSApp (JSFunction Nothing [] jsBlock) []
-  valueToJs (Seq _ []) = return $ JSObjectLiteral []
   valueToJs seq@(Seq{}) = do
-    jsBlock@(JSBlock{}) <- valueToJsReturn seq
+    jsBlock <- valueToJsReturn seq
     return $ JSApp (JSFunction Nothing [] jsBlock) []
   valueToJs (Constructor (_, _, _, Just IsNewtype) _ (ProperName ctor) _) =
     return $ JSVariableIntroduction ctor (Just $
@@ -212,17 +211,14 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ = do
                           ]
 
   valueToJsReturn :: Expr Ann -> m JS
-  valueToJsReturn seq@(Seq _ []) = do
-    js <- valueToJs seq
-    return $ JSReturn js
-  valueToJsReturn (Seq _ vals)   = do
-    js  <- mapM valueToJs (init vals)
-    ret <- valueToJsReturn (last vals)
-    return $ JSBlock (js ++ [ret])
+  valueToJsReturn (Seq _ v1 v2)   = do
+    js1 <- valueToJs v1
+    (JSBlock js2) <- valueToJsReturn v2
+    return $ JSBlock (js1 : js2)
   valueToJsReturn (Let _ decls' val) = do
     jsDecls <- concat <$> mapM bindToJs decls'
-    ret <- valueToJsReturn val
-    return $ JSBlock (jsDecls ++ [ret])
+    (JSBlock js) <- valueToJsReturn val
+    return $ JSBlock (jsDecls ++ js)
   valueToJsReturn val = do
     js <- valueToJs val
     return $ JSBlock [JSReturn js]

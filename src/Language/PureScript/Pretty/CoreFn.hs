@@ -31,7 +31,7 @@ ppExpr (Literal _ (NumericLiteral num)) = text (either show show $ num)
 ppExpr (Literal _ _) 			= text "<literal>"
 ppExpr (Let _ decls expr) 		= text "let" $$ nest 4 (vcat (map ppDecl decls))
                                           $$ text "in" $$ nest 4 (ppExpr expr)
-ppExpr (Seq _ es)                       = text "seq" $$ nest 4 (vcat (map ppExpr es))
+ppExpr (Seq _ e1 e2)                    = text "seq" $$ nest 4 (vcat [ppExpr e1,ppExpr e2])
 ppExpr (Abs _ name expr)  		= hcat (map text ["\\", show name, "->"]) <+> ppExpr expr
 ppExpr (App _ e1 e2) 			= ppExpr e1 <+> parens (ppExpr e2)
 ppExpr (Var _ ident)                    = text (show ident)

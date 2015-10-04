@@ -54,10 +54,8 @@ desugarDo d =
   go [] = error "The impossible happened in desugarDo"
   go [DoNotationValue val] = return val
   go (DoNotationValue val : rest) = do
-    desugared <- go rest
-    case desugared of
-      Seq exprs -> return $ Seq (val : exprs)
-      expr      -> return $ Seq [val, expr]
+    rest' <- go rest
+    return $ Seq val rest'
   go [DoNotationLet _] = throwError . errorMessage $ InvalidDoLet
   go (DoNotationLet ds : rest) = do
     rest' <- go rest

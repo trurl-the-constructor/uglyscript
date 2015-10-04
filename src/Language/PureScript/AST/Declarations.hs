@@ -396,9 +396,9 @@ data Expr
   --
   | Let [Declaration] Expr
   -- |
-  -- Sequential composition
+  -- Sequential composition of expressions
   --
-  | Seq [Expr]
+  | Seq Expr Expr
   -- |
   -- A do-notation block
   --
