@@ -111,7 +111,7 @@ usedIdents moduleName =
   usedNamesE :: S.Set Ident -> Expr -> (S.Set Ident, [Ident])
   usedNamesE scope (Var (Qualified Nothing name)) | name `S.notMember` scope = (scope, [name])
   usedNamesE scope (Var (Qualified (Just moduleName') name)) | moduleName == moduleName' && name `S.notMember` scope = (scope, [name])
-  usedNamesE scope (Abs (Left name) _) = (name `S.insert` scope, [])
+  usedNamesE scope (Abs (Left ids) _) = (foldl (flip S.insert) scope ids, [])
   usedNamesE scope _ = (scope, [])
 
   usedNamesB :: S.Set Ident -> Binder -> (S.Set Ident, [Ident])

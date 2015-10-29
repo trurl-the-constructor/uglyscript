@@ -93,10 +93,10 @@ findTypeDecl tyConNm = maybe (throwError . errorMessage $ CannotFindDerivingType
 mkSpineFunction :: forall m. (Functor m, MonadSupply m) => ModuleName -> Declaration -> m Expr
 mkSpineFunction mn (DataDeclaration _ _ _ args) = lamCase "$x" <$> mapM mkCtorClause args
   where
-  prodConstructor :: Expr -> Expr
+  prodConstructor :: [Expr] -> Expr
   prodConstructor = App (Constructor (Qualified (Just dataGeneric) (ProperName "SProd")))
 
-  recordConstructor :: Expr -> Expr
+  recordConstructor :: [Expr] -> Expr
   recordConstructor = App (Constructor (Qualified (Just dataGeneric) (ProperName "SRecord")))
 
   mkCtorClause :: (ProperName, [Type]) -> m CaseAlternative
@@ -105,16 +105,16 @@ mkSpineFunction mn (DataDeclaration _ _ _ args) = lamCase "$x" <$> mapM mkCtorCl
     return $ CaseAlternative [ConstructorBinder (Qualified (Just mn) ctorName) (map VarBinder idents)] (Right (caseResult idents))
     where
     caseResult idents =
-      App (prodConstructor (StringLiteral . runProperName $ ctorName))
-        . ArrayLiteral
-        $ zipWith toSpineFun (map (Var . Qualified Nothing) idents) tys
+      App (prodConstructor [StringLiteral . runProperName $ ctorName])
+        [ ArrayLiteral
+        $ zipWith toSpineFun (map (Var . Qualified Nothing) idents) tys ]
 
   toSpineFun :: Expr -> Type -> Expr
   toSpineFun i r | Just rec <- objectType r =
-      lamNull . recordConstructor . ArrayLiteral .
+      lamNull . recordConstructor $ [ ArrayLiteral $
           map (\(str,typ) -> ObjectLiteral [("recLabel", StringLiteral str), ("recValue", toSpineFun (Accessor str i) typ)])
-          $ decomposeRec rec
-  toSpineFun i _ = lamNull $ App (mkGenVar C.toSpine) i
+          (decomposeRec rec) ]
+  toSpineFun i _ = lamNull $ App (mkGenVar C.toSpine) [i]
 mkSpineFunction mn (PositionedDeclaration _ _ d) = mkSpineFunction mn d
 mkSpineFunction _ _ = error "mkSpineFunction: expected DataDeclaration"
 
@@ -122,10 +122,14 @@ mkSignatureFunction :: ModuleName -> Declaration -> Expr
 mkSignatureFunction _ (DataDeclaration _ _ _ args) = lamNull . mkSigProd $ map mkProdClause args
   where
   mkSigProd :: [Expr] -> Expr
-  mkSigProd = App (Constructor (Qualified (Just dataGeneric) (ProperName "SigProd"))) . ArrayLiteral
+  mkSigProd exprs = App
+                    (Constructor (Qualified (Just dataGeneric) (ProperName "SigProd")))
+                    [ ArrayLiteral exprs ]
 
   mkSigRec :: [Expr] -> Expr
-  mkSigRec = App (Constructor (Qualified (Just dataGeneric) (ProperName "SigRecord"))) . ArrayLiteral
+  mkSigRec exprs = App
+                   (Constructor (Qualified (Just dataGeneric) (ProperName "SigRecord")))
+                   [ ArrayLiteral exprs ]
 
   proxy :: Type -> Type
   proxy = TypeApp (TypeConstructor (Qualified (Just dataGeneric) (ProperName "Proxy")))
@@ -143,7 +147,7 @@ mkSignatureFunction _ (DataDeclaration _ _ _ args) = lamNull . mkSigProd $ map m
                            | (str, typ) <- decomposeRec rec
                            ]
   mkProductSignature typ = lamNull $ App (mkGenVar C.toSignature)
-                           (TypedValue False (mkGenVar "anyProxy") (proxy typ))
+                           [ TypedValue False (mkGenVar "anyProxy") (proxy typ) ]
 mkSignatureFunction mn (PositionedDeclaration _ _ d) = mkSignatureFunction mn d
 mkSignatureFunction _ _ = error "mkSignatureFunction: expected DataDeclaration"
 
@@ -151,7 +155,7 @@ mkFromSpineFunction :: forall m. (Functor m, MonadSupply m) => ModuleName -> Dec
 mkFromSpineFunction mn (DataDeclaration _ _ _ args) = lamCase "$x" <$> (addCatch <$> mapM mkAlternative args)
   where
   mkJust :: Expr -> Expr
-  mkJust = App (Constructor (Qualified (Just dataMaybe) (ProperName "Just")))
+  mkJust expr = App (Constructor (Qualified (Just dataMaybe) (ProperName "Just"))) [expr]
 
   mkNothing :: Expr
   mkNothing = Constructor (Qualified (Just dataMaybe) (ProperName "Nothing"))
@@ -180,9 +184,9 @@ mkFromSpineFunction mn (DataDeclaration _ _ _ args) = lamCase "$x" <$> (addCatch
     = App (lamCase "r" [ mkRecCase (decomposeRec rec)
                        , CaseAlternative [NullBinder] (Right mkNothing)
                        ])
-          (App e (mkPrelVar "unit"))
+          [App e [mkPrelVar "unit"]]
 
-  fromSpineFun e _ = App (mkGenVar C.fromSpine) (App e (mkPrelVar "unit"))
+  fromSpineFun e _ = App (mkGenVar C.fromSpine) [App e [mkPrelVar "unit"]]
 
   mkRecCase rs = CaseAlternative [ recordBinder [ ArrayBinder (map (VarBinder . Ident . fst) rs)
                                                 ]
@@ -203,7 +207,7 @@ objectType (TypeApp (TypeConstructor (Qualified (Just (ModuleName [ProperName "P
 objectType _ = Nothing
 
 lam :: String -> Expr -> Expr
-lam s = Abs (Left (Ident s))
+lam s = Abs (Left [Ident s])
 
 lamNull :: Expr -> Expr
 lamNull = lam "$q"
@@ -212,7 +216,7 @@ lamCase :: String -> [CaseAlternative] -> Expr
 lamCase s = lam s . Case [mkVar s]
 
 liftApplicative :: Expr -> [Expr] -> Expr
-liftApplicative = foldl' (\x e -> App (App (mkPrelVar "apply") x) e)
+liftApplicative = foldl' (\x e -> App (App (mkPrelVar "apply") [x]) [e])
 
 mkVarMn :: Maybe ModuleName -> String -> Expr
 mkVarMn mn s = Var (Qualified mn (Ident s))

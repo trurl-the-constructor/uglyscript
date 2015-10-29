@@ -230,7 +230,8 @@ missingAlternative env mn ca uncovered
 -- Then, returns the uncovered set of case alternatives.
 --
 checkExhaustive :: forall m. (MonadWriter MultipleErrors m) => Environment -> ModuleName -> Int -> [CaseAlternative] -> m ()
-checkExhaustive env mn numArgs cas = makeResult . first nub $ foldl' step ([initialize numArgs], (pure True, [])) cas
+checkExhaustive env mn numArgs cas
+  = makeResult . first nub $ foldl' step ([initialize numArgs], (pure True, [])) cas
   where
   step :: ([[Binder]], (Maybe Bool, [[Binder]])) -> CaseAlternative -> ([[Binder]], (Maybe Bool, [[Binder]]))
   step (uncovered, (nec, redundant)) ca =

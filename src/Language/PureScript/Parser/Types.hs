@@ -27,7 +27,7 @@ import Language.PureScript.Types
 import Language.PureScript.Parser.Common
 import Language.PureScript.Parser.Kinds
 import Language.PureScript.Parser.Lexer
-import Language.PureScript.Primitives
+import Language.PureScript.Primitives as Prim
    
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Expr as P
@@ -43,8 +43,10 @@ parseArrayOf = do
   _ <- squares $ TypeApp tyArray <$> parseType
   featureWasRemoved "Array notation is no longer supported. Use Array _ instead of [_]."
 
+{-
 parseFunction :: TokenParser Type
 parseFunction = parens $ rarrow >> return tyFunction
+-}
 
 parseObject :: TokenParser Type
 parseObject = braces $ TypeApp tyObject <$> parseRow
@@ -72,14 +74,15 @@ parseTypeAtom :: TokenParser Type
 parseTypeAtom = indented *> P.choice (map P.try
             [ parseArray
             , parseArrayOf
-            , parseFunction
+            -- , parseFunction
             , parseObject
             , parseTypeWildcard
             , parseTypeVariable
             , parseTypeConstructor
             , parseForAll
             , parens parseRow
-            , parens parsePolyType ])
+            , parens parseTupleOrPolyType
+            ])
 
 parseConstrainedType :: TokenParser Type
 parseConstrainedType = do
@@ -111,6 +114,13 @@ parseType = do
   ty <- parseAnyType
   unless (isMonoType ty) $ P.unexpected "polymorphic type"
   return ty
+
+parseTupleOrPolyType :: TokenParser Type
+parseTupleOrPolyType = do
+  types <- commaSep parsePolyType
+  case types of
+    [ty] -> return ty
+    _    -> return $ TypesTuple types
 
 -- |
 -- Parse a polytype

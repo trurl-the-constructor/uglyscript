@@ -44,6 +44,7 @@ typeLiterals = mkPattern match
   match (SaturatedTypeSynonym name args) = Just $ show name ++ "<" ++ intercalate "," (map prettyPrintTypeAtom args) ++ ">"
   match REmpty = Just "()"
   match row@RCons{} = Just $ '(' : prettyPrintRow row ++ ")"
+  match (TypesTuple types) = Just $ "(" ++ intercalate ", " (map prettyPrintType types) ++ ")"
   match _ = Nothing
 
 -- |
@@ -67,11 +68,13 @@ typeApp = mkPattern match
   match (TypeApp f x) = Just (f, x)
   match _ = Nothing
 
+
 appliedFunction :: Pattern () Type (Type, Type)
 appliedFunction = mkPattern match
   where
-  match (PrettyPrintFunction arg ret) = Just (arg, ret)
+  match (FunctionType args ret) = Just (TypesTuple args, ret)
   match _ = Nothing
+
 
 kinded :: Pattern () Type (Kind, Type)
 kinded = mkPattern match
@@ -82,7 +85,6 @@ kinded = mkPattern match
 insertPlaceholders :: Type -> Type
 insertPlaceholders = everywhereOnTypesTopDown convertForAlls . everywhereOnTypes convert
   where
-  convert (TypeApp (TypeApp f arg) ret) | f == tyFunction = PrettyPrintFunction arg ret
   convert (TypeApp o r) | o == tyObject = PrettyPrintObject r
   convert other = other
   convertForAlls (ForAll ident ty _) = go [ident] ty
@@ -100,8 +102,7 @@ matchType = buildPrettyPrinter operators matchTypeAtom
   operators :: OperatorTable () Type String
   operators =
     OperatorTable [ [ AssocL typeApp $ \f x -> f ++ " " ++ x ]
-                  , [ AssocR appliedFunction $ \arg ret -> arg ++ " -> " ++ ret
-                    ]
+                  , [ AssocR appliedFunction $ \args ret -> args ++ " -> " ++ ret ]
                   , [ Wrap forall_ $ \idents ty -> "forall " ++ unwords idents ++ ". " ++ ty ]
                   , [ Wrap kinded $ \k ty -> ty ++ " :: " ++ prettyPrintKind k ]
                   ]

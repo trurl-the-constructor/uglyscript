@@ -12,8 +12,14 @@ import qualified Data.Map as M
 -- |
 -- Type constructor for functions
 --
-tyFunction :: Type
-tyFunction = primType "Function"
+-- tyFunction :: Type
+-- tyFunction = primType "Function"
+
+-- |
+-- Type constructor for n-tuples
+--
+tyTuple :: Int -> Type
+tyTuple n = primType $ "Tuple" ++ show n
 
 -- |
 -- Type constructor for strings
@@ -63,12 +69,31 @@ tyObject = primType "Object"
 isObject :: Type -> Bool
 isObject = isTypeOrApplied tyObject
 
+{-           
 -- |
 -- Check whether a type is a function
 --
 isFunction :: Type -> Bool
 isFunction = isTypeOrApplied tyFunction
 
+isTupleType :: Type -> Bool
+isTupleType = maybe False (const True) . typesOfTuple
+
+typesOfTuple :: Type -> Maybe [Type]
+typesOfTuple = typesOfTuple' []
+    where
+      typesOfTuple' :: [Type] -> Type -> Maybe [Type]
+      typesOfTuple' args (TypeApp tcon targ) = typesOfTuple' (targ : args) tcon
+      typesOfTuple' args (TypeConstructor name)
+          | isTupleTyconName name = Just args
+          | otherwise             = Nothing
+      typesOfTuple' _ _ = Nothing
+      isTupleTyconName :: Qualified ProperName -> Bool
+      isTupleTyconName (Qualified (Just (ModuleName [ProperName modName])) (ProperName name))
+          =  modName == C.prim && "Tuple" `isPrefixOf` name  
+      isTupleTyconName _ = False
+-}                                    
+                               
 isTypeOrApplied :: Type -> Type -> Bool
 isTypeOrApplied t1 (TypeApp t2 _) = t1 == t2
 isTypeOrApplied t1 t2 = t1 == t2
@@ -77,10 +102,13 @@ isTypeOrApplied t1 t2 = t1 == t2
 -- Smart constructor for function types
 --
 function :: Type -> Type -> Type
-function t1 = TypeApp (TypeApp tyFunction t1)
+function (TypesTuple tys) ty = FunctionType tys ty
+function t1 t2               = FunctionType [t1] t2
 
-
-    
+{-                 
+tuple :: [Type] -> Type
+tuple tys = foldl TypeApp (tyTuple $ length tys) tys 
+-}  
 -- |
 -- Construct a ProperName in the Prim module
 --
@@ -97,14 +125,17 @@ primType = TypeConstructor . primName
 -- The primitive types in the external javascript environment with their associated kinds.
 --
 primTypes :: M.Map (Qualified ProperName) (Kind, TypeKind)
-primTypes = M.fromList [ (primName "Function" , (FunKind Star (FunKind Star Star), ExternData))
-                       , (primName "Array"    , (FunKind Star Star, ExternData))
-                       , (primName "Object"   , (FunKind (Row Star) Star, ExternData))
-                       , (primName "String"   , (Star, ExternData))
-                       , (primName "Char"     , (Star, ExternData))
-                       , (primName "Number"   , (Star, ExternData))
-                       , (primName "Int"      , (Star, ExternData))
-                       , (primName "Boolean"  , (Star, ExternData)) ]
+primTypes = M.fromList $
+            [ (primName "Function" , (FunKind Star (FunKind Star Star), ExternData))
+            , (primName "Array"    , (FunKind Star Star, ExternData))
+            , (primName "Object"   , (FunKind (Row Star) Star, ExternData))
+            , (primName "String"   , (Star, ExternData))
+            , (primName "Char"     , (Star, ExternData))
+            , (primName "Number"   , (Star, ExternData))
+            , (primName "Int"      , (Star, ExternData))
+            , (primName "Boolean"  , (Star, ExternData)) ]
+            ++ map (\n -> (primName ("Tuple" ++ show n), (tupleKind n, ExternData))) [2..10]
+                   where tupleKind n = foldr FunKind Star (replicate n Star)
 
 
 newVarSymbol :: String
@@ -123,17 +154,17 @@ primValues = M.fromList [
       primValueName name = (ModuleName [ProperName C.prim], Ident name)
           
       newVarType, writeVarType :: Type
-      newVarType = ForAll "a" ((TypeVar "a") `function` (TypeVar "a")) Nothing
-      writeVarType = ForAll "a" ((TypeVar "a") `function` ((TypeVar "a") `function` (TypeVar "a"))) Nothing
+      newVarType = ForAll "a" (FunctionType [TypeVar "a"] (TypeVar "a")) Nothing
+      writeVarType = ForAll "a" (FunctionType [TypeVar "a", TypeVar "a"] (TypeVar "a")) Nothing
 
 primValue :: String -> Qualified Ident
 primValue = Qualified (Just (ModuleName [ProperName C.prim])) . Ident
 
 newVarCall :: Expr -> Expr
-newVarCall expr = (Var $ primValue newVarSymbol) `App` expr
+newVarCall expr = (Var $ primValue newVarSymbol) `App` [expr]
 
 writeVarCall :: Qualified Ident -> Expr -> Expr
-writeVarCall ident expr = (Var $ primValue writeVarSymbol) `App` (Var ident) `App` expr
+writeVarCall ident expr = (Var $ primValue writeVarSymbol) `App` [(Var ident) `App` [expr]]
 
 
 -- |

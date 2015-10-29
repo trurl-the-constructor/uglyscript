@@ -48,11 +48,11 @@ data Expr a
   -- |
   -- Function introduction
   --
-  | Abs a Ident (Expr a)
+  | Abs a [Ident] (Expr a)
   -- |
   -- Function application
   --
-  | App a (Expr a) (Expr a)
+  | App a (Expr a) [Expr a]
   -- |
   -- Variable
   --

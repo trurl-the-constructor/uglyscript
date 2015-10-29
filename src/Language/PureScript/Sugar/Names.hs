@@ -131,8 +131,8 @@ renameInModule env imports (Module ss coms mn decls exps) =
   updateValue :: (Maybe SourceSpan, [Ident]) -> Expr -> m ((Maybe SourceSpan, [Ident]), Expr)
   updateValue (_, bound) v@(PositionedValue pos' _ _) =
     return ((Just pos', bound), v)
-  updateValue (pos, bound) (Abs (Left arg) val') =
-    return ((pos, arg : bound), Abs (Left arg) val')
+  updateValue (pos, bound) (Abs (Left args) val') =
+    return ((pos, args ++ bound), Abs (Left args) val')
   updateValue (pos, bound) (Let ds val') = do
     let args = mapMaybe letBoundVariable ds
     unless (length (nub args) == length args) $

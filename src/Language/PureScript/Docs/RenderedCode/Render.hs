@@ -96,7 +96,7 @@ typeApp = mkPattern match
 appliedFunction :: Pattern () Type (Type, Type)
 appliedFunction = mkPattern match
   where
-  match (PrettyPrintFunction arg ret) = Just (arg, ret)
+  match (FunctionType args ret) = Just (TypesTuple args, ret)
   match _ = Nothing
 
 kinded :: Pattern () Type (Kind, Type)
@@ -138,7 +138,6 @@ dePrim ty@(TypeConstructor (Qualified _ name))
 dePrim other = other
 
 convert :: RenderTypeOptions -> Type -> Type
-convert _ (TypeApp (TypeApp f arg) ret) | f == tyFunction = PrettyPrintFunction arg ret
 convert opts (TypeApp o r) | o == tyObject && prettyPrintObjects opts = PrettyPrintObject r
 convert _ other = other
 

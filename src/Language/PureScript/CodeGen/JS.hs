@@ -150,14 +150,14 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ = do
     in return $ JSFunction Nothing (map identToJs args) (JSBlock $ map assign args)
     where
     unAbs :: Expr Ann -> [Ident]
-    unAbs (Abs _ arg val) = arg : unAbs val
+    unAbs (Abs _ ids val) = ids ++ unAbs val
     unAbs _ = []
     assign :: Ident -> JS
     assign name = JSAssignment (accessorString (runIdent name) (JSVar "this"))
                                (var name)
-  valueToJs (Abs _ arg body) = do
+  valueToJs (Abs _ ids body) = do
     jsBlock@(JSBlock{}) <- valueToJsReturn body
-    return $ JSFunction Nothing [identToJs arg] jsBlock
+    return $ JSFunction Nothing (map identToJs ids) jsBlock
   valueToJs e@App{} = do
     let (f, args) = unApp e []
     args' <- mapM valueToJs args
@@ -171,8 +171,8 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ = do
 
     where
     unApp :: Expr Ann -> [Expr Ann] -> (Expr Ann, [Expr Ann])
-    unApp (App _ val arg) args = unApp val (arg : args)
-    unApp other args = (other, args)
+    unApp (App _ val args) args' = unApp val (args ++ args')
+    unApp other args' = (other, args')
   valueToJs (Var (_, _, _, Just IsForeign) qi@(Qualified (Just mn') ident)) =
     return $ if mn' == mn
              then foreignIdent ident

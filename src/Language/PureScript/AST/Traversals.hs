@@ -65,12 +65,14 @@ everywhereOnValues f g h = (f', g', h')
   g' (ObjectUpdate obj vs) = g (ObjectUpdate (g' obj) (map (fmap g') vs))
   g' (ObjectUpdater obj vs) = g (ObjectUpdater (fmap g' obj) (map (second (fmap g')) vs))
   g' (Abs name v) = g (Abs name (g' v))
-  g' (App v1 v2) = g (App (g' v1) (g' v2))
+  g' (App v vs) = g (App (g' v) (map g' vs)) 
   g' (IfThenElse v1 v2 v3) = g (IfThenElse (g' v1) (g' v2) (g' v3))
   g' (Case vs alts) = g (Case (map g' vs) (map handleCaseAlternative alts))
   g' (TypedValue check v ty) = g (TypedValue check (g' v) ty)
   g' (Let ds v) = g (Let (map f' ds) (g' v))
   g' (Seq v1 v2) = g (Seq (g' v1) (g' v2))
+  g' (Tuple vs) = g (Tuple (map g' vs))
+
   g' (Do es) = g (Do (map handleDoNotationElement es))
   g' (Assign name v) = g (Assign name (g' v))
   g' (PositionedValue pos com v) = g (PositionedValue pos com (g' v))
@@ -125,12 +127,13 @@ everywhereOnValuesTopDownM f g h = (f' <=< f, g' <=< g, h' <=< h)
   g' (ObjectUpdate obj vs) = ObjectUpdate <$> (g obj >>= g') <*> mapM (sndM (g' <=< g)) vs
   g' (ObjectUpdater obj vs) = ObjectUpdater <$> (maybeM g obj >>= maybeM g') <*> mapM (sndM $ maybeM (g' <=< g)) vs
   g' (Abs name v) = Abs name <$> (g v >>= g')
-  g' (App v1 v2) = App <$> (g v1 >>= g') <*> (g v2 >>= g')
+  g' (App v vs) = App <$> (g v >>= g') <*> mapM (g' <=< g) vs
   g' (IfThenElse v1 v2 v3) = IfThenElse <$> (g v1 >>= g') <*> (g v2 >>= g') <*> (g v3 >>= g')
   g' (Case vs alts) = Case <$> mapM (g' <=< g) vs <*> mapM handleCaseAlternative alts
   g' (TypedValue check v ty) = TypedValue check <$> (g v >>= g') <*> pure ty
   g' (Let ds v) = Let <$> mapM (f' <=< f) ds <*> (g v >>= g')
   g' (Seq v1 v2) = Seq <$> (g v1 >>= g') <*> (g v2 >>= g')
+  g' (Tuple vs) = Tuple <$> mapM (g' <=< g) vs
   g' (Do es) = Do <$> mapM handleDoNotationElement es
   g' (Assign name v) = Assign name <$> (g v >>= g')
   g' (PositionedValue pos com v) = PositionedValue pos com <$> (g v >>= g')
@@ -180,12 +183,13 @@ everywhereOnValuesM f g h = (f', g', h')
   g' (ObjectUpdate obj vs) = (ObjectUpdate <$> g' obj <*> mapM (sndM g') vs) >>= g
   g' (ObjectUpdater obj vs) = (ObjectUpdater <$> maybeM g' obj <*> mapM (sndM $ maybeM g') vs) >>= g
   g' (Abs name v) = (Abs name <$> g' v) >>= g
-  g' (App v1 v2) = (App <$> g' v1 <*> g' v2) >>= g
+  g' (App v vs) = (App <$> g' v <*> (mapM g' vs)) >>= g
   g' (IfThenElse v1 v2 v3) = (IfThenElse <$> g' v1 <*> g' v2 <*> g' v3) >>= g
   g' (Case vs alts) = (Case <$> mapM g' vs <*> mapM handleCaseAlternative alts) >>= g
   g' (TypedValue check v ty) = (TypedValue check <$> g' v <*> pure ty) >>= g
   g' (Let ds v) = (Let <$> mapM f' ds <*> g' v) >>= g
   g' (Seq v1 v2) = (Seq <$> g' v1 <*> g' v2) >>= g
+  g' (Tuple vs) = (Tuple <$> mapM g' vs) >>= g
   g' (Do es) = (Do <$> mapM handleDoNotationElement es) >>= g
   g' (Assign name v) = (Assign name <$> g' v) >>= g
   g' (PositionedValue pos com v) = (PositionedValue pos com <$> g' v) >>= g
@@ -238,12 +242,13 @@ everythingOnValues (<>) f g h i j = (f', g', h', i', j')
   g' v@(ObjectUpdate obj vs) = foldl (<>) (g v <> g' obj) (map (g' . snd) vs)
   g' v@(ObjectUpdater obj vs) = foldl (<>) (maybe (g v) (\x -> g v <> g' x) obj) (map g' (mapMaybe snd vs))
   g' v@(Abs _ v1) = g v <> g' v1
-  g' v@(App v1 v2) = g v <> g' v1 <> g' v2
+  g' v@(App v1 vs) = foldl (<>) (g v <> g' v1) (map g' vs)
   g' v@(IfThenElse v1 v2 v3) = g v <> g' v1 <> g' v2 <> g' v3
   g' v@(Case vs alts) = foldl (<>) (foldl (<>) (g v) (map g' vs)) (map i' alts)
   g' v@(TypedValue _ v1 _) = g v <> g' v1
   g' v@(Let ds v1) = foldl (<>) (g v) (map f' ds) <> g' v1
   g' v@(Seq v1 v2) = g v <> g' v1 <> g' v2
+  g' v@(Tuple vs) = foldl (<>) (g v) (map g' vs)
   g' v@(Do es) = foldl (<>) (g v) (map j' es)
   g' v@(Assign _ v1) = g v <> g' v1
   g' v@(PositionedValue _ _ v1) = g v <> g' v1
@@ -307,12 +312,13 @@ everythingWithContextOnValues s0 r0 (<>) f g h i j = (f'' s0, g'' s0, h'' s0, i'
   g' s (ObjectUpdate obj vs) = foldl (<>) (g'' s obj) (map (g'' s . snd) vs)
   g' s (ObjectUpdater obj vs) = foldl (<>) (maybe r0 (g'' s) obj) (map (g'' s) (mapMaybe snd vs))
   g' s (Abs _ v1) = g'' s v1
-  g' s (App v1 v2) = g'' s v1 <> g'' s v2
+  g' s (App v vs) = foldl (<>) (g'' s v) (map (g'' s) vs)
   g' s (IfThenElse v1 v2 v3) = g'' s v1 <> g'' s v2 <> g'' s v3
   g' s (Case vs alts) = foldl (<>) (foldl (<>) r0 (map (g'' s) vs)) (map (i'' s) alts)
   g' s (TypedValue _ v1 _) = g'' s v1
   g' s (Let ds v1) = foldl (<>) r0 (map (f'' s) ds) <> g'' s v1
   g' s (Seq v1 v2) = g'' s v1 <> g'' s v2
+  g' s (Tuple vs) = foldl (<>) r0 (map (g'' s) vs)
   g' s (Do es) = foldl (<>) r0 (map (j'' s) es)
   g' s (Assign _ v1) = g'' s v1
   g' s (PositionedValue _ _ v1) = g'' s v1
@@ -379,12 +385,13 @@ everywhereWithContextOnValuesM s0 f g h i j = (f'' s0, g'' s0, h'' s0, i'' s0, j
   g' s (ObjectUpdate obj vs) = ObjectUpdate <$> g'' s obj <*> mapM (sndM (g'' s)) vs
   g' s (ObjectUpdater obj vs) = ObjectUpdater <$> maybeM (g'' s) obj <*> mapM (sndM $ maybeM (g'' s)) vs
   g' s (Abs name v) = Abs name <$> g'' s v
-  g' s (App v1 v2) = App <$> g'' s v1 <*> g'' s v2
+  g' s (App v vs) = App <$> g'' s v <*> mapM (g'' s) vs
   g' s (IfThenElse v1 v2 v3) = IfThenElse <$> g'' s v1 <*> g'' s v2 <*> g'' s v3
   g' s (Case vs alts) = Case <$> mapM (g'' s) vs <*> mapM (i'' s) alts
   g' s (TypedValue check v ty) = TypedValue check <$> g'' s v <*> pure ty
   g' s (Let ds v) = Let <$> mapM (f'' s) ds <*> g'' s v
   g' s (Seq v1 v2) = Seq <$> g'' s v1 <*> g'' s v2
+  g' s (Tuple vs) = Tuple <$> mapM (g'' s) vs
   g' s (Do es) = Do <$> mapM (j'' s) es
   g' s (Assign name v) = Assign name <$> g'' s v
   g' s (PositionedValue pos com v) = PositionedValue pos com <$> g'' s v

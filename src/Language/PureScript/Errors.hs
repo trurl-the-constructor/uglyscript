@@ -42,7 +42,7 @@ import Control.Arrow(first)
 
 import Language.PureScript.AST
 import Language.PureScript.Pretty
-import Language.PureScript.Primitives (isObject, isFunction)
+import Language.PureScript.Primitives (isObject)
 import Language.PureScript.Types
 import Language.PureScript.Names
 import Language.PureScript.Kinds
@@ -134,7 +134,7 @@ data SimpleErrorMessage
   | SubsumptionCheckFailed
   | ExprDoesNotHaveType Expr Type
   | PropertyIsMissing String Type
-  | CannotApplyFunction Type Expr
+  | CannotApplyFunction Type [Expr]
   | TypeSynonymInstance
   | OrphanInstance Ident (Qualified ProperName) [Type]
   | InvalidNewtype
@@ -605,11 +605,11 @@ prettyPrintSingleError full level e = prettyPrintErrorMessage <$> onTypesInError
             ]
     goSimple (PropertyIsMissing prop row) =
       line $ "Row " ++ prettyPrintRow row ++ " lacks required property " ++ show prop
-    goSimple (CannotApplyFunction fn arg) =
+    goSimple (CannotApplyFunction fn args) =
       paras [ line "Cannot apply function of type"
             , indent $ line $ prettyPrintType fn
-            , line "to argument"
-            , indent $ line $ prettyPrintValue arg
+            , line "to arguments"
+            , indent $ line $ intercalate "," $ map prettyPrintValue args
             ]
     goSimple TypeSynonymInstance =
       line "Type synonym instances are disallowed"
@@ -752,8 +752,8 @@ prettyPrintSingleError full level e = prettyPrintErrorMessage <$> onTypesInError
     suggestions' (ConflictingImport nm im) = [ line $ "Possible fix: hide " ++ show nm ++ " when importing " ++ show im ++ ":"
                                              , indent . line $ "import " ++ show im ++ " hiding (" ++ nm ++ ")"
                                              ]
-    suggestions' (TypesDoNotUnify t1 t2)
-      | isObject t1 && isFunction t2 = [line "Note that function composition in PureScript is defined using (<<<)"]
+    suggestions' (TypesDoNotUnify t1 (FunctionType _ _))
+      | isObject t1 = [line "Note that function composition in PureScript is defined using (<<<)"]
       | otherwise             = []
     suggestions' _ = []
 

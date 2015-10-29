@@ -120,11 +120,13 @@ entails env moduleName context = solve
       dictionaryValueToValue :: DictionaryValue -> Expr
       dictionaryValueToValue (LocalDictionaryValue fnName) = Var fnName
       dictionaryValueToValue (GlobalDictionaryValue fnName) = Var fnName
-      dictionaryValueToValue (DependentDictionaryValue fnName dicts) = foldl App (Var fnName) (map dictionaryValueToValue dicts)
+      dictionaryValueToValue (DependentDictionaryValue fnName dicts)
+          = foldl App (Var fnName)
+            (map (\d -> [dictionaryValueToValue d]) dicts)
       dictionaryValueToValue (SubclassDictionaryValue dict superclassName index) =
         App (Accessor (C.__superclass_ ++ show superclassName ++ "_" ++ show index)
                       (dictionaryValueToValue dict))
-            valUndefined
+            [ valUndefined ]
       -- Ensure that a substitution is valid
       verifySubstitution :: [(String, Type)] -> Maybe [(String, Type)]
       verifySubstitution subst = do

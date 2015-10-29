@@ -362,7 +362,7 @@ parseIdentifierAndValue = (,) <$> (C.indented *> (lname <|> stringLiteral) <* C.
 parseAbs :: TokenParser Expr
 parseAbs = do
   symbol' "\\"
-  args <- P.many1 (C.indented *> (Abs <$> (Left <$> P.try C.parseIdent <|> Right <$> parseBinderNoParens)))
+  args <- P.many1 (C.indented *> (Abs <$> ((\ident -> Left [ident]) <$> P.try C.parseIdent <|> Right <$> parseBinderNoParens)))
   C.indented *> rarrow
   value <- parseValue
   return $ toFunction args value
@@ -427,7 +427,7 @@ parseValueAtom = P.choice
             , parseIfThenElse
             , parseDo
             , parseLet
-            , P.try $ Parens <$> parens parseValue
+            , P.try $ parseTupleOrValue
             , parseOperatorSection
             , P.try parseObjectUpdaterWildcard ]
 
@@ -476,6 +476,32 @@ parseDoNotationElement = P.choice
 parseObjectGetter :: TokenParser Expr
 parseObjectGetter = ObjectGetter <$> (underscore *> C.indented *> dot *> C.indented *> (lname <|> stringLiteral))
 
+parseTupleOrValue :: TokenParser Expr
+parseTupleOrValue = do
+  exprs <- parens $ commaSep parseValue
+  case identsOf exprs of
+    Nothing  -> return $ tupleOrVal exprs
+    Just ids -> parseIdsTupleCont ids exprs
+
+    where
+      tupleOrVal :: [Expr] -> Expr
+      tupleOrVal [expr] = Parens expr
+      tupleOrVal exprs  = Tuple exprs
+
+      parseIdsTupleCont :: [Ident] -> [Expr] -> TokenParser Expr
+      parseIdsTupleCont ids exprs =
+          (do rarrow
+              body <- parseValue
+              return $ Abs (Left ids) body)
+          <|> (return $ tupleOrVal exprs)
+
+      identsOf :: [Expr] -> Maybe [Ident]
+      identsOf (PositionedValue _ _ (Var (Qualified Nothing ident)) : exprs) =
+          do ids <- identsOf exprs
+             return $ ident : ids
+      identsOf []  = return []
+      identsOf _   = Nothing 
+
 -- |
 -- Parse a value
 --
@@ -488,7 +514,7 @@ parseValue = withSourceSpan PositionedValue
   indexersAndAccessors = C.buildPostfixParser postfixTable1 parseValueAtom
   postfixTable1 = [ parseAccessor
                   , P.try . parseUpdaterBody . Just ]
-  postfixTable2 = [ \v -> P.try (flip App <$> (C.indented *> indexersAndAccessors)) <*> pure v
+  postfixTable2 = [ \v -> P.try (makeApp <$> (C.indented *> indexersAndAccessors)) <*> pure v
                   , \v -> flip (TypedValue True) <$> (P.try (C.indented *> doubleColon) *> parsePolyType) <*> pure v
                   ]
   operators = [ [ P.Prefix (P.try (C.indented *> symbol' "-") >> return UnaryMinus)
@@ -497,6 +523,8 @@ parseValue = withSourceSpan PositionedValue
                     return (BinaryNoParens ident)) P.AssocRight
                 ]
               ]
+  makeApp (Tuple args) expr = App expr args
+  makeApp arg expr = App expr [arg]
 
 parseUpdaterBody :: Maybe Expr -> TokenParser Expr
 parseUpdaterBody v = ObjectUpdater v <$> (C.indented *> braces (commaSep1 (C.indented *> parsePropertyUpdate)))
@@ -570,7 +598,8 @@ parseBinder = withSourceSpan PositionedBinder (P.buildExpressionParser operators
                     , parseConstructorBinder
                     , parseObjectBinder
                     , parseArrayBinder
-                    , parens parseBinder ]) P.<?> "binder"
+                    , parens parseBinder
+                    ]) P.<?> "binder"
 
 -- |
 -- Parse a binder as it would appear in a top level declaration
@@ -587,7 +616,8 @@ parseBinderNoParens = P.choice (map P.try
                   , parseNullaryConstructorBinder
                   , parseObjectBinder
                   , parseArrayBinder
-                  , parens parseBinder ]) P.<?> "binder"
+                  , parens parseBinder
+                  ]) P.<?> "binder"
 
 -- |
 -- Parse a guard

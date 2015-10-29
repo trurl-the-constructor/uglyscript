@@ -77,6 +77,8 @@ literals = mkPattern' match
     , withIndent $ prettyPrintValue' v2
     , currentIndent
     ]
+  match (Tuple vs) = return $ "(" ++ intercalate ", " 
+                     (map prettyPrintValue vs) ++ ")"
   match (Var ident) = return $ show ident
   match (Assign ident rhs) = concat <$> sequence
     [ return $ show ident
@@ -92,6 +94,7 @@ literals = mkPattern' match
   match (OperatorSection op (Left val)) = return $ "(" ++ prettyPrintValue val ++ " " ++ prettyPrintValue op ++ ")"
   match (TypeClassDictionary (name, tys) _) = return $ "<<dict " ++ show name ++ " " ++ unwords (map prettyPrintTypeAtom tys) ++ ">>"
   match (SuperClassDictionary name _) = return $ "<<superclass dict " ++ show name ++ ">>"
+  match (TypeClassDictionaryAccessor className name) = return $ "<<type class dictionary accessor: " ++ show className ++ "." ++ show name ++ ">>"
   match (TypedValue _ val _) = prettyPrintValue' val
   match (PositionedValue _ _ val) = prettyPrintValue' val
   match _ = mzero
@@ -115,7 +118,13 @@ prettyPrintDeclaration (VariableDeclaration ident expr) =
                         , return " := "
                         , prettyPrintValue' expr ]
 prettyPrintDeclaration (PositionedDeclaration _ _ d) = prettyPrintDeclaration d
-prettyPrintDeclaration decl = return $ "<cannot prettyprint> " ++ show decl
+prettyPrintDeclaration (TypeClassDeclaration _ _ _ _) = return $ "<<type class declaration>>" 
+prettyPrintDeclaration (TypeSynonymDeclaration name _ _) =
+    concat <$> sequence [ return "type "
+                        , return $ show name
+                        , return " = "
+                        , return "<<type synonym>>" ]
+prettyPrintDeclaration decl = return $ "<<cannot prettyprint>>" ++ show decl
 
 prettyPrintCaseAlternative :: CaseAlternative -> StateT PrinterState Maybe String
 prettyPrintCaseAlternative (CaseAlternative binders result) =
@@ -180,10 +189,10 @@ objectUpdate = mkPattern match
   match (ObjectUpdater o ps) = Just (flip map ps $ \(key, val) -> key ++ " = " ++ maybe "_" prettyPrintValue val, fromMaybe (Var (Qualified Nothing $ Ident "_")) o)
   match _ = Nothing
 
-app :: Pattern PrinterState Expr (String, Expr)
+app :: Pattern PrinterState Expr ([String], Expr)
 app = mkPattern match
   where
-  match (App val arg) = Just (prettyPrintValue arg, val)
+  match (App val args) = Just (map prettyPrintValue args, val)
   match _ = Nothing
 
 lam :: Pattern PrinterState Expr (String, Expr)
@@ -207,7 +216,7 @@ prettyPrintValue' = runKleisli $ runPattern matchValue
   operators =
     OperatorTable [ [ Wrap accessor $ \prop val -> val ++ "." ++ prop ]
                   , [ Wrap objectUpdate $ \ps val -> val ++ "{ " ++ intercalate ", " ps ++ " }" ]
-                  , [ Wrap app $ \arg val -> val ++ "(" ++ arg ++ ")" ]
+                  , [ Wrap app $ \args val -> val ++ "(" ++ intercalate ", " args ++ ")" ]
                   , [ Split lam $ \arg val -> "\\" ++ arg ++ " -> " ++ prettyPrintValue val ]
                   , [ Wrap ifThenElse $ \(th, el) cond -> "if " ++ cond ++ " then " ++ prettyPrintValue th ++ " else " ++ prettyPrintValue el ]
                   ]

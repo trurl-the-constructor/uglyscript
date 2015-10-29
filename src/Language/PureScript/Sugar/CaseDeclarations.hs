@@ -61,7 +61,7 @@ desugarAbs = flip parU f
   replace :: (Functor m, Applicative m, MonadSupply m, MonadError MultipleErrors m) => Expr -> m Expr
   replace (Abs (Right binder) val) = do
     ident <- Ident <$> freshName
-    return $ Abs (Left ident) $ Case [Var (Qualified Nothing ident)] [CaseAlternative [binder] (Right val)]
+    return $ Abs (Left [ident]) $ Case [Var (Qualified Nothing ident)] [CaseAlternative [binder] (Right val)]
   replace other = return other
 
 -- |
@@ -96,7 +96,7 @@ inSameGroup _ _ = False
 toDecls :: forall m. (Functor m, Applicative m, Monad m, MonadSupply m, MonadError MultipleErrors m) => [Declaration] -> m [Declaration]
 toDecls [ValueDeclaration ident nameKind bs (Right val)] | all isVarBinder bs = do
   args <- mapM fromVarBinder bs
-  let body = foldr (Abs . Left) val args
+  let body = foldr (\arg -> Abs $ Left [arg]) val args
   guardWith (errorMessage (OverlappingArgNames (Just ident))) $ length (nub args) == length args
   return [ValueDeclaration ident nameKind [] (Right body)]
   where
@@ -138,7 +138,7 @@ makeCaseDeclaration ident alternatives = do
             else replicateM (length argNames) (Ident <$> freshName)
   let vars = map (Var . Qualified Nothing) args
       binders = [ CaseAlternative bs result | (bs, result) <- alternatives ]
-      value = foldr (Abs . Left) (Case vars binders) args
+      value = foldr (\arg -> Abs $ Left [arg]) (Case vars binders) args
   return $ ValueDeclaration ident Public [] (Right value)
   where
   -- We will construct a table of potential names.

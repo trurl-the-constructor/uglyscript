@@ -361,11 +361,11 @@ data Expr
   -- |
   -- Function introduction
   --
-  | Abs (Either Ident Binder) Expr
+  | Abs (Either [Ident] Binder) Expr
   -- |
   -- Function application
   --
-  | App Expr Expr
+  | App Expr [Expr]
   -- |
   -- Variable
   --
@@ -399,6 +399,10 @@ data Expr
   -- Sequential composition of expressions
   --
   | Seq Expr Expr
+  -- |
+  -- Tuple expression
+  --
+  | Tuple [Expr]
   -- |
   -- A do-notation block
   --

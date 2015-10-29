@@ -75,7 +75,9 @@ lint (Module _ _ mn ds _) = censor (onErrorMessages (ErrorInModule mn)) $ mapM_ 
     stepD s _ = (s, mempty)
 
     stepE :: S.Set Ident -> Expr -> (S.Set Ident, MultipleErrors)
-    stepE s (Abs (Left name) _) = bind s name
+    stepE s (Abs (Left names) _) =
+      case mapAccumL bind s names of
+        (s', es) -> (s', mconcat es)
     stepE s (Let ds' _) =
       case mapAccumL bind s (nub (mapMaybe getDeclIdent ds')) of
         (s', es) -> (s', mconcat es)
