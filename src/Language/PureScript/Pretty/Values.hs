@@ -63,19 +63,21 @@ literals = mkPattern' match
     , withIndent $ prettyPrintMany prettyPrintCaseAlternative binders
     , currentIndent
     ]
-  match (Let ds val) = concat <$> sequence
-    [ return "let\n"
-    , withIndent $ prettyPrintMany prettyPrintDeclaration ds
-    , return "\n"
-    , currentIndent
-    , return "in "
+  match (Let decls val) = concat <$> sequence
+    [ return "let "
+    , prettyPrintMany prettyPrintDeclaration decls
+    , return ";\n"
     , prettyPrintValue' val
     ]
   match (Seq v1 v2) = concat <$> sequence
-    [ return "seq\n"
-    , withIndent $ prettyPrintValue' v1
-    , withIndent $ prettyPrintValue' v2
-    , currentIndent
+    [ prettyPrintValue' v1
+    , return ";\n"
+    , prettyPrintValue' v2
+    ]
+  match (Block v) = concat <$> sequence
+    [ return "{\n"
+    , withIndent $ prettyPrintValue' v
+    , return "\n}"
     ]
   match (Tuple vs) = return $ "(" ++ intercalate ", " 
                      (map prettyPrintValue vs) ++ ")"
@@ -84,11 +86,6 @@ literals = mkPattern' match
     [ return $ show ident
     , return " := "
     , prettyPrintValue' rhs
-    ]
-  match (Do els) = concat <$> sequence
-    [ return "do\n"
-    , withIndent $ prettyPrintMany prettyPrintDoNotationElement els
-    , currentIndent
     ]
   match (OperatorSection op (Right val)) = return $ "(" ++ prettyPrintValue op ++ " " ++ prettyPrintValue val ++ ")"
   match (OperatorSection op (Left val)) = return $ "(" ++ prettyPrintValue val ++ " " ++ prettyPrintValue op ++ ")"
@@ -146,22 +143,6 @@ prettyPrintCaseAlternative (CaseAlternative binders result) =
       , return " -> "
       , prettyPrintValue' val
       ]
-
-prettyPrintDoNotationElement :: DoNotationElement -> StateT PrinterState Maybe String
-prettyPrintDoNotationElement (DoNotationValue val) =
-  prettyPrintValue' val
-prettyPrintDoNotationElement (DoNotationBind binder val) =
-  concat <$> sequence
-    [ return (prettyPrintBinder binder)
-    , return " <- "
-    , prettyPrintValue' val
-    ]
-prettyPrintDoNotationElement (DoNotationLet ds) =
-  concat <$> sequence
-    [ return "let "
-    , withIndent $ prettyPrintMany prettyPrintDeclaration ds
-    ]
-prettyPrintDoNotationElement (PositionedDoNotationElement _ _ el) = prettyPrintDoNotationElement el
 
 prettyPrintObject' :: [(String, Maybe Expr)] -> StateT PrinterState Maybe String
 prettyPrintObject' [] = return "{}"

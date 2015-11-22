@@ -91,7 +91,7 @@ elaborateImports imps (Module ss coms mn decls exps) = Module ss coms mn decls' 
   where
   decls' :: [Declaration]
   decls' =
-    let (f, _, _, _, _) = everythingOnValues (++) (const []) fqValues (const []) (const []) (const [])
+    let (f, _, _, _) = everythingOnValues (++) (const []) fqValues (const []) (const [])
     in mkImport `map` nub (f `concatMap` decls) ++ decls
   fqValues :: Expr -> [ModuleName]
   fqValues (Var (Qualified (Just mn') _)) | notElem mn' (importedModules imps) = [mn']
@@ -107,7 +107,7 @@ renameInModule :: forall m. (Applicative m, MonadError MultipleErrors m) => Env 
 renameInModule env imports (Module ss coms mn decls exps) =
   Module ss coms mn <$> parU decls go <*> pure exps
   where
-  (go, _, _, _, _) = everywhereWithContextOnValuesM (Nothing, []) updateDecl updateValue updateBinder updateCase defS
+  (go, _, _, _) = everywhereWithContextOnValuesM (Nothing, []) updateDecl updateValue updateBinder updateCase
 
   updateDecl :: (Maybe SourceSpan, [Ident]) -> Declaration -> m ((Maybe SourceSpan, [Ident]), Declaration)
   updateDecl (_, bound) d@(PositionedDeclaration pos _ _) =

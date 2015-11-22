@@ -400,13 +400,13 @@ data Expr
   --
   | Seq Expr Expr
   -- |
+  -- Block of expressions { ... }
+  --
+  | Block Expr
+  -- |
   -- Tuple expression
   --
   | Tuple [Expr]
-  -- |
-  -- A do-notation block
-  --
-  | Do [DoNotationElement]
   -- |
   -- An application of a typeclass dictionary constructor. The value should be
   -- an ObjectLiteral.
@@ -446,24 +446,3 @@ data CaseAlternative = CaseAlternative
     --
   , caseAlternativeResult :: Either [(Guard, Expr)] Expr
   } deriving (Show, D.Data, D.Typeable)
-
--- |
--- A statement in a do-notation block
---
-data DoNotationElement
-  -- |
-  -- A monadic value without a binder
-  --
-  = DoNotationValue Expr
-  -- |
-  -- A monadic value with a binder
-  --
-  | DoNotationBind Binder Expr
-  -- |
-  -- A let statement, i.e. a pure value with a binder
-  --
-  | DoNotationLet [Declaration]
-  -- |
-  -- A do notation element with source position information
-  --
-  | PositionedDoNotationElement SourceSpan [Comment] DoNotationElement deriving (Show, D.Data, D.Typeable)

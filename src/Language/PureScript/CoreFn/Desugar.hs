@@ -211,7 +211,7 @@ moduleToCoreFn env (A.Module _ coms mn decls (Just exps)) =
 --
 findQualModules :: [A.Declaration] -> [ModuleName]
 findQualModules decls =
-  let (f, _, _, _, _) = everythingOnValues (++) (const []) fqValues fqBinders (const []) (const [])
+  let (f, _, _, _) = everythingOnValues (++) (const []) fqValues fqBinders (const [])
   in f `concatMap` decls
   where
   fqValues :: A.Expr -> [ModuleName]

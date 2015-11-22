@@ -122,7 +122,6 @@ library
                      Language.PureScript.Sugar
                      Language.PureScript.Sugar.BindingGroups
                      Language.PureScript.Sugar.CaseDeclarations
-                     Language.PureScript.Sugar.DoNotation
                      Language.PureScript.Sugar.Names
                      Language.PureScript.Sugar.Names.Env
                      Language.PureScript.Sugar.Names.Imports

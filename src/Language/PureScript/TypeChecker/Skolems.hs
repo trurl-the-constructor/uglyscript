@@ -89,7 +89,7 @@ skolemEscapeCheck root@TypedValue{} =
   -- We traverse the tree top-down, and collect any SkolemScopes introduced by ForAlls.
   -- If a Skolem is encountered whose SkolemScope is not in the current list, we have found
   -- an escaped skolem variable.
-  let (_, f, _, _, _) = everythingWithContextOnValues [] [] (++) def go def def def
+  let (_, f, _, _) = everythingWithContextOnValues [] [] (++) def go def def
   in case f root of
        [] -> return ()
        ((binding, val) : _) -> throwError . singleError $ ErrorInExpression val $ SimpleErrorWrapper $ EscapedSkolem binding
@@ -110,7 +110,7 @@ skolemEscapeCheck root@TypedValue{} =
   go scos _ = (scos, [])
   findBindingScope :: SkolemScope -> Maybe Expr
   findBindingScope sco =
-    let (_, f, _, _, _) = everythingOnValues mappend (const mempty) go' (const mempty) (const mempty) (const mempty)
+    let (_, f, _, _) = everythingOnValues mappend (const mempty) go' (const mempty) (const mempty)
     in getFirst $ f root
     where
     go' val@(TypedValue _ _ (ForAll _ _ (Just sco'))) | sco == sco' = First (Just val)

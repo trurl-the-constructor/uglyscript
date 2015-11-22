@@ -109,7 +109,9 @@ parseValueDeclaration = do
       reserved "where"
       C.indented
       C.mark $ P.many1 (C.same *> parseLocalDeclaration)
+    -- rewrite 'expr where decls' to '(let decls; expr)'
     return $ maybe value (`Let` value) whereClause
+
 
 parseVariableDeclaration :: TokenParser Declaration
 parseVariableDeclaration = do
@@ -277,7 +279,6 @@ parseDeclaration = positioned (P.choice
 parseLocalDeclaration :: TokenParser Declaration
 parseLocalDeclaration = positioned (P.choice
                    [ parseTypeDeclaration
-                   , parseVariableDeclaration
                    , parseValueDeclaration
                    ] P.<?> "local declaration")
 
@@ -359,16 +360,8 @@ parseIdentifierAndValue = (,) <$> (C.indented *> (lname <|> stringLiteral) <* C.
   where
   val = (Just <$> parseValue) <|> (underscore *> pure Nothing)
 
-parseAbs :: TokenParser Expr
-parseAbs = do
-  symbol' "\\"
-  args <- P.many1 (C.indented *> (Abs <$> ((\ident -> Left [ident]) <$> P.try C.parseIdent <|> Right <$> parseBinderNoParens)))
-  C.indented *> rarrow
-  value <- parseValue
-  return $ toFunction args value
-  where
-  toFunction :: [Expr -> Expr] -> Expr -> Expr
-  toFunction args value = foldr ($) value args
+parseNullaryAbs :: TokenParser Expr
+parseNullaryAbs = Abs (Left []) <$> (symbol' "^" *> parseValueAtom)
 
 parseAssign :: TokenParser Expr
 parseAssign = do
@@ -400,16 +393,6 @@ parseIfThenElse = IfThenElse <$> (P.try (reserved "if") *> C.indented *> parseVa
                              <*> (C.indented *> reserved "then" *> C.indented *> parseValue)
                              <*> (C.indented *> reserved "else" *> C.indented *> parseValue)
 
-parseLet :: TokenParser Expr
-parseLet = do
-  reserved "let"
-  C.indented
-  ds <- C.mark $ P.many1 (C.same *> parseLocalDeclaration)
-  C.indented
-  reserved "in"
-  result <- parseValue
-  return $ Let ds result
-
 parseValueAtom :: TokenParser Expr
 parseValueAtom = P.choice
             [ P.try parseNumericLiteral
@@ -419,14 +402,13 @@ parseValueAtom = P.choice
             , parseArrayLiteral
             , P.try parseObjectLiteral
             , P.try parseObjectGetter
-            , parseAbs
+            , P.try parseSequence
+            , parseNullaryAbs
             , P.try parseConstructor
             , P.try parseAssign
             , P.try parseVar
             , parseCase
             , parseIfThenElse
-            , parseDo
-            , parseLet
             , P.try $ parseTupleOrValue
             , parseOperatorSection
             , P.try parseObjectUpdaterWildcard ]
@@ -455,23 +437,6 @@ parseAccessor :: Expr -> TokenParser Expr
 parseAccessor (Constructor _) = P.unexpected "constructor"
 parseAccessor obj = P.try $ Accessor <$> (C.indented *> dot *> C.indented *> (lname <|> stringLiteral)) <*> pure obj
 
-parseDo :: TokenParser Expr
-parseDo = do
-  reserved "do"
-  C.indented
-  Do <$> C.mark (P.many1 (C.same *> C.mark parseDoNotationElement))
-
-parseDoNotationLet :: TokenParser DoNotationElement
-parseDoNotationLet = DoNotationLet <$> (reserved "let" *> C.indented *> C.mark (P.many1 (C.same *> parseLocalDeclaration)))
-
-parseDoNotationBind :: TokenParser DoNotationElement
-parseDoNotationBind = DoNotationBind <$> parseBinder <*> (C.indented *> larrow *> parseValue)
-
-parseDoNotationElement :: TokenParser DoNotationElement
-parseDoNotationElement = P.choice
-            [ P.try parseDoNotationBind
-            , parseDoNotationLet
-            , P.try (DoNotationValue <$> parseValue) ]
 
 parseObjectGetter :: TokenParser Expr
 parseObjectGetter = ObjectGetter <$> (underscore *> C.indented *> dot *> C.indented *> (lname <|> stringLiteral))
@@ -503,10 +468,50 @@ parseTupleOrValue = do
       identsOf _   = Nothing 
 
 -- |
--- Parse a value
+-- Parse a sequence of primary values and local (let- and var-) declarations
 --
 parseValue :: TokenParser Expr
-parseValue = withSourceSpan PositionedValue
+parseValue = C.mark parseSeqItem
+    where
+      parseSeqItem = parseLetItem <|> parseVarItem <|> parseExprItem
+
+      parseLetItem = do
+        reserved "let"
+        decls <- C.indented *> (C.mark $ P.many1 (C.same *> parseLocalDeclaration))
+        Let decls <$> (C.same *> parseSeqItem)
+
+      parseVarItem = do
+        decl <- parseVariableDeclaration
+        Let [decl] <$> (C.same *> parseSeqItem)
+                  
+      parseExprItem = do
+        expr <- parsePrimaryValue
+        (Seq expr <$> (C.same *> parseSeqItem)) <|> return expr
+             
+parseSequence :: TokenParser Expr
+parseSequence = braces parseSeqItem
+    where
+      parseSeqItem = parseLetItem <|> parseVarItem <|> parseExprItem
+      
+      parseLetItem = do
+        reserved "let"
+        decl <- parseLocalDeclaration
+        Let [decl] <$> (semi *> parseSeqItem)
+
+      parseVarItem = do
+        decl <- parseVariableDeclaration
+        Let [decl] <$> (semi *> parseSeqItem)
+                  
+      parseExprItem = do
+        expr <- parsePrimaryValue
+        (Seq expr <$> (semi *> parseSeqItem)) <|> return expr
+
+
+-- |
+-- Parse a value built from atoms and operators
+--
+parsePrimaryValue :: TokenParser Expr
+parsePrimaryValue = withSourceSpan PositionedValue
   (P.buildExpressionParser operators
     . C.buildPostfixParser postfixTable2
     $ indexersAndAccessors) P.<?> "expression"

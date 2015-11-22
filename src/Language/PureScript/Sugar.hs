@@ -32,7 +32,6 @@ import Language.PureScript.Errors
 
 import Language.PureScript.Sugar.BindingGroups as S
 import Language.PureScript.Sugar.CaseDeclarations as S
-import Language.PureScript.Sugar.DoNotation as S
 import Language.PureScript.Sugar.Names as S
 import Language.PureScript.Sugar.ObjectWildcards as S
 import Language.PureScript.Sugar.Operators as S
@@ -67,7 +66,6 @@ desugar :: (Applicative m, MonadSupply m, MonadError MultipleErrors m, MonadWrit
 desugar = map removeSignedLiterals
           >>> mapM desugarObjectConstructors
           >=> mapM desugarOperatorSections
-          >=> mapM desugarDoModule
           >=> desugarCasesModule
           >=> desugarTypeDeclarationsModule
           >=> desugarImports

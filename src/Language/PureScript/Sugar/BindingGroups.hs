@@ -60,7 +60,7 @@ createBindingGroups moduleName = mapM f <=< handleDecls
   (f, _, _) = everywhereOnValuesTopDownM return handleExprs return
 
   handleExprs :: (Functor m, MonadError MultipleErrors m) => Expr -> m Expr
-  handleExprs (Let ds val) = flip Let val <$> handleDecls ds
+  handleExprs (Let ds v) = flip Let v <$> handleDecls ds
   handleExprs other = return other
 
   -- |
@@ -103,7 +103,7 @@ collapseBindingGroupsForValue other = other
 
 usedIdents :: ModuleName -> Declaration -> [Ident]
 usedIdents moduleName =
-  let (f, _, _, _, _) = everythingWithContextOnValues S.empty [] (++) def usedNamesE usedNamesB def def
+  let (f, _, _, _) = everythingWithContextOnValues S.empty [] (++) def usedNamesE usedNamesB def
   in nub . f
   where
   def s _ = (s, [])
@@ -119,7 +119,7 @@ usedIdents moduleName =
 
 usedImmediateIdents :: ModuleName -> Declaration -> [Ident]
 usedImmediateIdents moduleName =
-  let (f, _, _, _, _) = everythingWithContextOnValues True [] (++) def usedNamesE def def def
+  let (f, _, _, _) = everythingWithContextOnValues True [] (++) def usedNamesE def def
   in nub . f
   where
   def s _ = (s, [])
@@ -132,7 +132,7 @@ usedImmediateIdents moduleName =
 
 usedProperNames :: ModuleName -> Declaration -> [ProperName]
 usedProperNames moduleName =
-  let (f, _, _, _, _) = accumTypes (everythingOnTypes (++) usedNames)
+  let (f, _, _, _) = accumTypes (everythingOnTypes (++) usedNames)
   in nub . f
   where
   usedNames :: Type -> [ProperName]

@@ -137,18 +137,15 @@ primTypes = M.fromList $
             ++ map (\n -> (primName ("Tuple" ++ show n), (tupleKind n, ExternData))) [2..10]
                    where tupleKind n = foldr FunKind Star (replicate n Star)
 
-
-newVarSymbol :: String
+newVarSymbol, writeVarSymbol :: String
 newVarSymbol = "$newVar"
-
-writeVarSymbol :: String
 writeVarSymbol = "$writeVar"
 
 primValues :: M.Map (ModuleName, Ident) (Type, NameKind, NameVisibility)
 primValues = M.fromList [
-                   ((primValueName newVarSymbol),   (newVarType, Public, Defined)),
-                   ((primValueName writeVarSymbol), (writeVarType, Public, Defined))
-                  ]
+              ((primValueName newVarSymbol),   (newVarType, Public, Defined)),
+              ((primValueName writeVarSymbol), (writeVarType, Public, Defined))
+             ]
     where
       primValueName :: String -> (ModuleName, Ident)
       primValueName name = (ModuleName [ProperName C.prim], Ident name)
@@ -159,7 +156,7 @@ primValues = M.fromList [
 
 primValue :: String -> Qualified Ident
 primValue = Qualified (Just (ModuleName [ProperName C.prim])) . Ident
-
+            
 newVarCall :: Expr -> Expr
 newVarCall expr = (Var $ primValue newVarSymbol) `App` [expr]
 

@@ -55,7 +55,7 @@ lint (Module _ _ mn ds _) = censor (onErrorMessages (ErrorInModule mn)) $ mapM_ 
 
   lintDeclaration :: Declaration -> m ()
   lintDeclaration d =
-    let (f, _, _, _, _) = everythingWithContextOnValues moduleNames mempty mappend stepD stepE stepB def def
+    let (f, _, _, _) = everythingWithContextOnValues moduleNames mempty mappend stepD stepE stepB def
 
         f' :: Declaration -> MultipleErrors
         f' (PositionedDeclaration pos _ dec) = onErrorMessages (PositionedError pos) (f' dec)

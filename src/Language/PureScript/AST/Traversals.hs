@@ -71,9 +71,8 @@ everywhereOnValues f g h = (f', g', h')
   g' (TypedValue check v ty) = g (TypedValue check (g' v) ty)
   g' (Let ds v) = g (Let (map f' ds) (g' v))
   g' (Seq v1 v2) = g (Seq (g' v1) (g' v2))
+  g' (Block v) = g (Block (g' v))
   g' (Tuple vs) = g (Tuple (map g' vs))
-
-  g' (Do es) = g (Do (map handleDoNotationElement es))
   g' (Assign name v) = g (Assign name (g' v))
   g' (PositionedValue pos com v) = g (PositionedValue pos com (g' v))
   g' other = g other
@@ -91,12 +90,6 @@ everywhereOnValues f g h = (f', g', h')
     ca { caseAlternativeBinders = map h' (caseAlternativeBinders ca)
        , caseAlternativeResult = (map (g' *** g') +++ g') (caseAlternativeResult ca)
        }
-
-  handleDoNotationElement :: DoNotationElement -> DoNotationElement
-  handleDoNotationElement (DoNotationValue v) = DoNotationValue (g' v)
-  handleDoNotationElement (DoNotationBind b v) = DoNotationBind (h' b) (g' v)
-  handleDoNotationElement (DoNotationLet ds) = DoNotationLet (map f' ds)
-  handleDoNotationElement (PositionedDoNotationElement pos com e) = PositionedDoNotationElement pos com (handleDoNotationElement e)
 
 everywhereOnValuesTopDownM :: (Functor m, Applicative m, Monad m) =>
   (Declaration -> m Declaration) ->
@@ -133,8 +126,8 @@ everywhereOnValuesTopDownM f g h = (f' <=< f, g' <=< g, h' <=< h)
   g' (TypedValue check v ty) = TypedValue check <$> (g v >>= g') <*> pure ty
   g' (Let ds v) = Let <$> mapM (f' <=< f) ds <*> (g v >>= g')
   g' (Seq v1 v2) = Seq <$> (g v1 >>= g') <*> (g v2 >>= g')
+  g' (Block v) = Block <$> (g v >>= g') 
   g' (Tuple vs) = Tuple <$> mapM (g' <=< g) vs
-  g' (Do es) = Do <$> mapM handleDoNotationElement es
   g' (Assign name v) = Assign name <$> (g v >>= g')
   g' (PositionedValue pos com v) = PositionedValue pos com <$> (g v >>= g')
   g' other = g other
@@ -148,11 +141,6 @@ everywhereOnValuesTopDownM f g h = (f' <=< f, g' <=< g, h' <=< h)
 
   handleCaseAlternative (CaseAlternative bs val) = CaseAlternative <$> mapM (h' <=< h) bs
                                                                    <*> eitherM (mapM (pairM (g' <=< g) (g' <=< g))) (g' <=< g) val
-
-  handleDoNotationElement (DoNotationValue v) = DoNotationValue <$> (g' <=< g) v
-  handleDoNotationElement (DoNotationBind b v) = DoNotationBind <$> (h' <=< h) b <*> (g' <=< g) v
-  handleDoNotationElement (DoNotationLet ds) = DoNotationLet <$> mapM (f' <=< f) ds
-  handleDoNotationElement (PositionedDoNotationElement pos com e) = PositionedDoNotationElement pos com <$> handleDoNotationElement e
 
 everywhereOnValuesM :: (Functor m, Applicative m, Monad m) =>
   (Declaration -> m Declaration) ->
@@ -189,8 +177,8 @@ everywhereOnValuesM f g h = (f', g', h')
   g' (TypedValue check v ty) = (TypedValue check <$> g' v <*> pure ty) >>= g
   g' (Let ds v) = (Let <$> mapM f' ds <*> g' v) >>= g
   g' (Seq v1 v2) = (Seq <$> g' v1 <*> g' v2) >>= g
+  g' (Block v) = (Block <$> g' v) >>= g
   g' (Tuple vs) = (Tuple <$> mapM g' vs) >>= g
-  g' (Do es) = (Do <$> mapM handleDoNotationElement es) >>= g
   g' (Assign name v) = (Assign name <$> g' v) >>= g
   g' (PositionedValue pos com v) = (PositionedValue pos com <$> g' v) >>= g
   g' other = g other
@@ -205,19 +193,13 @@ everywhereOnValuesM f g h = (f', g', h')
   handleCaseAlternative (CaseAlternative bs val) = CaseAlternative <$> mapM h' bs
                                                                    <*> eitherM (mapM (pairM g' g')) g' val
 
-  handleDoNotationElement (DoNotationValue v) = DoNotationValue <$> g' v
-  handleDoNotationElement (DoNotationBind b v) = DoNotationBind <$> h' b <*> g' v
-  handleDoNotationElement (DoNotationLet ds) = DoNotationLet <$> mapM f' ds
-  handleDoNotationElement (PositionedDoNotationElement pos com e) = PositionedDoNotationElement pos com <$> handleDoNotationElement e
-
 everythingOnValues :: (r -> r -> r) ->
                       (Declaration -> r) ->
                       (Expr -> r) ->
                       (Binder -> r) ->
                       (CaseAlternative -> r) ->
-                      (DoNotationElement -> r) ->
-                      (Declaration -> r, Expr -> r, Binder -> r, CaseAlternative -> r, DoNotationElement -> r)
-everythingOnValues (<>) f g h i j = (f', g', h', i', j')
+                      (Declaration -> r, Expr -> r, Binder -> r, CaseAlternative -> r)
+everythingOnValues (<>) f g h i = (f', g', h', i')
   where
   f' d@(DataBindingGroupDeclaration ds) = foldl (<>) (f d) (map f' ds)
   f' d@(ValueDeclaration _ _ bs (Right val)) = foldl (<>) (f d) (map h' bs) <> g' val
@@ -248,8 +230,8 @@ everythingOnValues (<>) f g h i j = (f', g', h', i', j')
   g' v@(TypedValue _ v1 _) = g v <> g' v1
   g' v@(Let ds v1) = foldl (<>) (g v) (map f' ds) <> g' v1
   g' v@(Seq v1 v2) = g v <> g' v1 <> g' v2
+  g' v@(Block v1) = g v <> g' v1
   g' v@(Tuple vs) = foldl (<>) (g v) (map g' vs)
-  g' v@(Do es) = foldl (<>) (g v) (map j' es)
   g' v@(Assign _ v1) = g v <> g' v1
   g' v@(PositionedValue _ _ v1) = g v <> g' v1
   g' v = g v
@@ -264,11 +246,6 @@ everythingOnValues (<>) f g h i j = (f', g', h', i', j')
   i' ca@(CaseAlternative bs (Right val)) = foldl (<>) (i ca) (map h' bs) <> g' val
   i' ca@(CaseAlternative bs (Left gs)) = foldl (<>) (i ca) (map h' bs ++ concatMap (\(grd, val) -> [g' grd, g' val]) gs)
 
-  j' e@(DoNotationValue v) = j e <> g' v
-  j' e@(DoNotationBind b v) = j e <> h' b <> g' v
-  j' e@(DoNotationLet ds) = foldl (<>) (j e) (map f' ds)
-  j' e@(PositionedDoNotationElement _ _ e1) = j e <> j' e1
-
 everythingWithContextOnValues ::
   s ->
   r ->
@@ -277,13 +254,12 @@ everythingWithContextOnValues ::
   (s -> Expr              -> (s, r)) ->
   (s -> Binder            -> (s, r)) ->
   (s -> CaseAlternative   -> (s, r)) ->
-  (s -> DoNotationElement -> (s, r)) ->
   ( Declaration       -> r
   , Expr              -> r
   , Binder            -> r
   , CaseAlternative   -> r
-  , DoNotationElement -> r)
-everythingWithContextOnValues s0 r0 (<>) f g h i j = (f'' s0, g'' s0, h'' s0, i'' s0, j'' s0)
+  )
+everythingWithContextOnValues s0 r0 (<>) f g h i = (f'' s0, g'' s0, h'' s0, i'' s0) 
   where
   f'' s d = let (s', r) = f s d in r <> f' s' d
 
@@ -316,10 +292,10 @@ everythingWithContextOnValues s0 r0 (<>) f g h i j = (f'' s0, g'' s0, h'' s0, i'
   g' s (IfThenElse v1 v2 v3) = g'' s v1 <> g'' s v2 <> g'' s v3
   g' s (Case vs alts) = foldl (<>) (foldl (<>) r0 (map (g'' s) vs)) (map (i'' s) alts)
   g' s (TypedValue _ v1 _) = g'' s v1
-  g' s (Let ds v1) = foldl (<>) r0 (map (f'' s) ds) <> g'' s v1
+  g' s (Let ds v) = foldl (<>) r0 (map (f'' s) ds) <> g'' s v
   g' s (Seq v1 v2) = g'' s v1 <> g'' s v2
+  g' s (Block v) = g'' s v
   g' s (Tuple vs) = foldl (<>) r0 (map (g'' s) vs)
-  g' s (Do es) = foldl (<>) r0 (map (j'' s) es)
   g' s (Assign _ v1) = g'' s v1
   g' s (PositionedValue _ _ v1) = g'' s v1
   g' _ _ = r0
@@ -338,26 +314,17 @@ everythingWithContextOnValues s0 r0 (<>) f g h i j = (f'' s0, g'' s0, h'' s0, i'
   i' s (CaseAlternative bs (Right val)) = foldl (<>) r0 (map (h'' s) bs) <> g'' s val
   i' s (CaseAlternative bs (Left gs)) = foldl (<>) r0 (map (h'' s) bs ++ concatMap (\(grd, val) -> [g'' s grd, g'' s val]) gs)
 
-  j'' s e = let (s', r) = j s e in r <> j' s' e
-
-  j' s (DoNotationValue v) = g'' s v
-  j' s (DoNotationBind b v) = h'' s b <> g'' s v
-  j' s (DoNotationLet ds) = foldl (<>) r0 (map (f'' s) ds)
-  j' s (PositionedDoNotationElement _ _ e1) = j'' s e1
-
 everywhereWithContextOnValuesM :: (Functor m, Applicative m, Monad m) =>
   s ->
   (s -> Declaration       -> m (s, Declaration)) ->
   (s -> Expr              -> m (s, Expr)) ->
   (s -> Binder            -> m (s, Binder)) ->
   (s -> CaseAlternative   -> m (s, CaseAlternative)) ->
-  (s -> DoNotationElement -> m (s, DoNotationElement)) ->
   ( Declaration       -> m Declaration
   , Expr              -> m Expr
   , Binder            -> m Binder
-  , CaseAlternative   -> m CaseAlternative
-  , DoNotationElement -> m DoNotationElement)
-everywhereWithContextOnValuesM s0 f g h i j = (f'' s0, g'' s0, h'' s0, i'' s0, j'' s0)
+  , CaseAlternative   -> m CaseAlternative)
+everywhereWithContextOnValuesM s0 f g h i = (f'' s0, g'' s0, h'' s0, i'' s0)
   where
   f'' s = uncurry f' <=< f s
 
@@ -391,8 +358,8 @@ everywhereWithContextOnValuesM s0 f g h i j = (f'' s0, g'' s0, h'' s0, i'' s0, j
   g' s (TypedValue check v ty) = TypedValue check <$> g'' s v <*> pure ty
   g' s (Let ds v) = Let <$> mapM (f'' s) ds <*> g'' s v
   g' s (Seq v1 v2) = Seq <$> g'' s v1 <*> g'' s v2
+  g' s (Block v) = Block <$> g'' s v
   g' s (Tuple vs) = Tuple <$> mapM (g'' s) vs
-  g' s (Do es) = Do <$> mapM (j'' s) es
   g' s (Assign name v) = Assign name <$> g'' s v
   g' s (PositionedValue pos com v) = PositionedValue pos com <$> g'' s v
   g' _ other = return other
@@ -410,15 +377,8 @@ everywhereWithContextOnValuesM s0 f g h i j = (f'' s0, g'' s0, h'' s0, i'' s0, j
 
   i' s (CaseAlternative bs val) = CaseAlternative <$> mapM (h'' s) bs <*> eitherM (mapM (pairM (g'' s) (g'' s))) (g'' s) val
 
-  j'' s = uncurry j' <=< j s
-
-  j' s (DoNotationValue v) = DoNotationValue <$> g'' s v
-  j' s (DoNotationBind b v) = DoNotationBind <$> h'' s b <*> g'' s v
-  j' s (DoNotationLet ds) = DoNotationLet <$> mapM (f'' s) ds
-  j' s (PositionedDoNotationElement pos com e1) = PositionedDoNotationElement pos com <$> j'' s e1
-
-accumTypes :: (Monoid r) => (Type -> r) -> (Declaration -> r, Expr -> r, Binder -> r, CaseAlternative -> r, DoNotationElement -> r)
-accumTypes f = everythingOnValues mappend forDecls forValues (const mempty) (const mempty) (const mempty)
+accumTypes :: (Monoid r) => (Type -> r) -> (Declaration -> r, Expr -> r, Binder -> r, CaseAlternative -> r)
+accumTypes f = everythingOnValues mappend forDecls forValues (const mempty) (const mempty) 
   where
   forDecls (DataDeclaration _ _ _ dctors) = mconcat (concatMap (map f . snd) dctors)
   forDecls (ExternDeclaration _ ty) = f ty
