@@ -33,7 +33,7 @@ module Language.PureScript.Parser.Declarations (
 import Prelude hiding (lex)
 
 import Data.Maybe (fromMaybe)
-
+    
 import Control.Applicative
 import Control.Arrow ((+++))
 import Control.Monad.Error.Class (MonadError(..))
@@ -103,7 +103,7 @@ parseValueDeclaration = do
   where
   parseValueWithWhereClause :: TokenParser Expr
   parseValueWithWhereClause = do
-    value <- parseValue
+    value <- parsePrimaryValue
     whereClause <- P.optionMaybe $ do
       C.indented
       reserved "where"
@@ -118,7 +118,7 @@ parseVariableDeclaration = do
   reserved "var"
   ident <- parseIdent
   optAnnotation <- P.optionMaybe $ doubleColon *> parsePolyType
-  initExpr <- assign *> parseValue
+  initExpr <- assign *> parsePrimaryValue
   return $ VariableDeclaration ident $ case optAnnotation of
                                          Just ty -> TypedValue True initExpr ty
                                          Nothing -> initExpr
@@ -402,14 +402,13 @@ parseValueAtom = P.choice
             , parseArrayLiteral
             , P.try parseObjectLiteral
             , P.try parseObjectGetter
-            , P.try parseSequence
-            , parseNullaryAbs
+            , P.try parseBlock
             , P.try parseConstructor
             , P.try parseAssign
             , P.try parseVar
             , parseCase
             , parseIfThenElse
-            , P.try $ parseTupleOrValue
+            , P.try parseTupleOrValue
             , parseOperatorSection
             , P.try parseObjectUpdaterWildcard ]
 
@@ -478,34 +477,20 @@ parseValue = C.mark parseSeqItem
       parseLetItem = do
         reserved "let"
         decls <- C.indented *> (C.mark $ P.many1 (C.same *> parseLocalDeclaration))
-        Let decls <$> (C.same *> parseSeqItem)
+        Let decls <$> ((C.same <|> semi) *> parseSeqItem)
 
       parseVarItem = do
         decl <- parseVariableDeclaration
-        Let [decl] <$> (C.same *> parseSeqItem)
-                  
+        Let [decl] <$> ((C.same <|> semi) *> parseSeqItem)
+
       parseExprItem = do
         expr <- parsePrimaryValue
-        (Seq expr <$> (C.same *> parseSeqItem)) <|> return expr
+        (Seq expr <$> ((C.same <|> semi) *> parseSeqItem)) <|> return expr
              
-parseSequence :: TokenParser Expr
-parseSequence = braces parseSeqItem
-    where
-      parseSeqItem = parseLetItem <|> parseVarItem <|> parseExprItem
-      
-      parseLetItem = do
-        reserved "let"
-        decl <- parseLocalDeclaration
-        Let [decl] <$> (semi *> parseSeqItem)
-
-      parseVarItem = do
-        decl <- parseVariableDeclaration
-        Let [decl] <$> (semi *> parseSeqItem)
-                  
-      parseExprItem = do
-        expr <- parsePrimaryValue
-        (Seq expr <$> (semi *> parseSeqItem)) <|> return expr
-
+parseBlock :: TokenParser Expr
+parseBlock = braces $ do
+               expr <- parseValue
+               return $ Abs (Left []) expr
 
 -- |
 -- Parse a value built from atoms and operators
