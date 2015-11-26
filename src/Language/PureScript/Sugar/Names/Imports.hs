@@ -11,46 +11,54 @@
 --
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 
-module Language.PureScript.Sugar.Names.Imports (resolveImports) where
+module Language.PureScript.Sugar.Names.Imports
+  ( resolveImports
+  , resolveModuleImport
+  , findImports
+  ) where
 
-import Data.List (find)
-import Data.Maybe (fromMaybe, isNothing)
+import Prelude ()
+import Prelude.Compat
+
+import Data.List (find, delete)
+import Data.Maybe (fromMaybe, isJust, isNothing, fromJust)
+import Data.Foldable (traverse_, for_)
 
 import Control.Arrow (first)
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative (Applicative(..), (<$>))
-#endif
 import Control.Monad
 import Control.Monad.Error.Class (MonadError(..))
-import Control.Monad.Writer (MonadWriter(..), censor)
+import Control.Monad.Writer (MonadWriter(..))
 
 import qualified Data.Map as M
 
+import Language.PureScript.Crash
 import Language.PureScript.AST
 import Language.PureScript.Names
 import Language.PureScript.Errors
 import Language.PureScript.Sugar.Names.Env
 
+-- |
 -- Finds the imports within a module, mapping the imported module name to an optional set of
 -- explicitly imported declarations.
+--
 findImports :: forall m. (Applicative m, MonadError MultipleErrors m, MonadWriter MultipleErrors m) => [Declaration] -> m (M.Map ModuleName [(Maybe SourceSpan, ImportDeclarationType, Maybe ModuleName)])
 findImports = foldM (go Nothing) M.empty
   where
-  go pos result (ImportDeclaration mn typ qual) = do
+  go pos result (ImportDeclaration mn typ qual isOldSyntax) = do
+    when isOldSyntax . tell . errorMessage $ DeprecatedQualifiedSyntax mn (fromJust qual)
     checkImportRefType typ
     let imp = (pos, typ, qual)
     return $ M.insert mn (maybe [imp] (imp :) (mn `M.lookup` result)) result
-  go _ result (PositionedDeclaration pos _ d) = rethrowWithPosition pos $ go (Just pos) result d
+  go _ result (PositionedDeclaration pos _ d) = warnAndRethrowWithPosition pos $ go (Just pos) result d
   go _ result _ = return result
 
   -- Ensure that classes don't appear in an `import X hiding (...)`
   checkImportRefType :: ImportDeclarationType -> m ()
-  checkImportRefType (Hiding refs) = mapM_ checkImportRef refs
+  checkImportRefType (Hiding refs) = traverse_ checkImportRef refs
   checkImportRefType _ = return ()
   checkImportRef :: DeclarationRef -> m ()
   checkImportRef (ModuleRef name) = throwError . errorMessage $ ImportHidingModule name
@@ -59,25 +67,56 @@ findImports = foldM (go Nothing) M.empty
 -- |
 -- Constructs a set of imports for a module.
 --
-resolveImports :: forall m. (Applicative m, MonadError MultipleErrors m, MonadWriter MultipleErrors m) => Env -> Module -> m Imports
+resolveImports :: (Applicative m, MonadError MultipleErrors m, MonadWriter MultipleErrors m) => Env -> Module -> m Imports
 resolveImports env (Module _ _ currentModule decls _) =
-  censor (onErrorMessages (ErrorInModule currentModule)) $ do
-    scope <- M.insert currentModule [(Nothing, Implicit, Nothing)] <$> findImports decls
-    foldM resolveImport' nullImports (M.toList scope)
-  where
+  warnAndRethrow (addHint (ErrorInModule currentModule)) $ do
+    imports <- findImports decls
 
-  resolveImport' :: Imports -> (ModuleName, [(Maybe SourceSpan, ImportDeclarationType, Maybe ModuleName)]) -> m Imports
-  resolveImport' ie (mn, imps) = foldM go ie imps
+    for_ (M.toList imports) $ \(mn, imps) -> do
+      let unqual = filter (\(_, _, q) -> isJust q) (reverse imps)
+
+      when (length imps > 1) $ for_ (selfCartesianSubset imps) $
+        \((_, t1, q1), (pos, t2, q2)) ->
+          when (t1 == t2 && q1 == q2) $
+            maybe id warnWithPosition pos $
+              tell . errorMessage $ DuplicateImport mn t2 q2
+
+      when (length unqual > 1) $
+        case find (\(_, typ, _) -> typ == Implicit) unqual of
+          Just i ->
+            for_ (delete i unqual) $ \(pos, typ, _) ->
+              maybe id warnWithPosition pos $
+                tell $ errorMessage $ RedundantUnqualifiedImport mn typ
+          Nothing ->
+            for_ (tail unqual) $ \(pos, _, _) ->
+              maybe id warnWithPosition pos $
+                tell $ errorMessage $ DuplicateSelectiveImport mn
+
+    let scope = M.insert currentModule [(Nothing, Implicit, Nothing)] imports
+    foldM (resolveModuleImport currentModule env) nullImports (M.toList scope)
+
+  where
+  selfCartesianSubset :: [a] -> [(a, a)]
+  selfCartesianSubset (x : xs) = [(x, y) | y <- xs] ++ selfCartesianSubset xs
+  selfCartesianSubset [] = []
+
+-- | Constructs a set of imports for a single module import.
+resolveModuleImport ::
+  forall m. (Applicative m, MonadError MultipleErrors m, MonadWriter MultipleErrors m) =>
+  ModuleName -> Env -> Imports ->
+  (ModuleName, [(Maybe SourceSpan, ImportDeclarationType, Maybe ModuleName)]) ->
+  m Imports
+resolveModuleImport currentModule env ie (mn, imps) = foldM go ie imps
+  where
+  go :: Imports -> (Maybe SourceSpan, ImportDeclarationType, Maybe ModuleName) -> m Imports
+  go ie' (pos, typ, impQual) = do
+    modExports <- positioned $ maybe (throwError . errorMessage $ UnknownModule mn) (return . envModuleExports) $ mn `M.lookup` env
+    let ie'' = ie' { importedModules = mn : importedModules ie' }
+    positioned $ resolveImport currentModule mn modExports ie'' impQual typ
     where
-    go :: Imports -> (Maybe SourceSpan, ImportDeclarationType, Maybe ModuleName) -> m Imports
-    go ie' (pos, typ, impQual) = do
-      modExports <- positioned $ maybe (throwError . errorMessage $ UnknownModule mn) (return . envModuleExports) $ mn `M.lookup` env
-      let ie'' = ie' { importedModules = mn : importedModules ie' }
-      positioned $ resolveImport currentModule mn modExports ie'' impQual typ
-      where
-      positioned err = case pos of
-        Nothing -> err
-        Just pos' -> rethrowWithPosition pos' err
+    positioned err = case pos of
+      Nothing -> err
+      Just pos' -> rethrowWithPosition pos' err
 
 -- |
 -- Extends the local environment for a module by resolving an import of another module.
@@ -94,7 +133,7 @@ resolveImport currentModule importModule exps imps impQual =
 
   -- Check that a 'DeclarationRef' refers to an importable symbol
   checkRefs :: [DeclarationRef] -> m ()
-  checkRefs = mapM_ check
+  checkRefs = traverse_ check
     where
     check (PositionedDeclarationRef pos _ r) =
       rethrowWithPosition pos $ check r
@@ -103,15 +142,15 @@ resolveImport currentModule importModule exps imps impQual =
     check (TypeRef name dctors) = do
       checkImportExists UnknownImportType ((fst . fst) `map` exportedTypes exps) name
       let allDctors = fst `map` allExportedDataConstructors name
-      maybe (return ()) (mapM_ $ checkDctorExists name allDctors) dctors
+      maybe (return ()) (traverse_ $ checkDctorExists name allDctors) dctors
     check (TypeClassRef name) =
       checkImportExists UnknownImportTypeClass (fst `map` exportedTypeClasses exps) name
     --check (ModuleRef name) =
     --  checkImportExists (const UnknownModule) (exportedModules exps) name
-    check _ = error "Invalid argument to checkRefs"
+    check _ = internalError "Invalid argument to checkRefs"
 
   -- Check that an explicitly imported item exists in the module it is being imported from
-  checkImportExists :: (Eq a, Show a) => (ModuleName -> a -> SimpleErrorMessage) -> [a] -> a -> m ()
+  checkImportExists :: (Eq a) => (ModuleName -> a -> SimpleErrorMessage) -> [a] -> a -> m ()
   checkImportExists unknown exports item =
     when (item `notElem` exports) $ throwError . errorMessage $ unknown importModule item
 
@@ -147,43 +186,44 @@ resolveImport currentModule importModule exps imps impQual =
   -- Import something explicitly
   importExplicit :: Imports -> DeclarationRef -> m Imports
   importExplicit imp (PositionedDeclarationRef pos _ r) =
-    rethrowWithPosition pos . warnWithPosition pos $ importExplicit imp r
+    warnAndRethrowWithPosition pos $ importExplicit imp r
   importExplicit imp (ValueRef name) = do
-    values' <- updateImports (importedValues imp) (exportedValues exps) name
+    values' <- updateImports (importedValues imp) showIdent (exportedValues exps) name
     return $ imp { importedValues = values' }
   importExplicit imp (TypeRef name dctors) = do
-    types' <- updateImports (importedTypes imp) (first fst `map` exportedTypes exps) name
+    types' <- updateImports (importedTypes imp) runProperName (first fst `map` exportedTypes exps) name
     let exportedDctors :: [(ProperName, ModuleName)]
         exportedDctors = allExportedDataConstructors name
         dctorNames :: [ProperName]
         dctorNames = fst `map` exportedDctors
-    maybe (return ()) (mapM_ $ checkDctorExists name dctorNames) dctors
+    maybe (return ()) (traverse_ $ checkDctorExists name dctorNames) dctors
     when (null dctorNames && isNothing dctors) . tell . errorMessage $ MisleadingEmptyTypeImport importModule name
-    dctors' <- foldM (flip updateImports exportedDctors) (importedDataConstructors imp) (fromMaybe dctorNames dctors)
+    dctors' <- foldM (\m -> updateImports m runProperName exportedDctors) (importedDataConstructors imp) (fromMaybe dctorNames dctors)
     return $ imp { importedTypes = types', importedDataConstructors = dctors' }
   importExplicit imp (TypeClassRef name) = do
-    typeClasses' <- updateImports (importedTypeClasses imp) (exportedTypeClasses exps) name
+    typeClasses' <- updateImports (importedTypeClasses imp) runProperName (exportedTypeClasses exps) name
     return $ imp { importedTypeClasses = typeClasses' }
-  importExplicit _ _ = error "Invalid argument to importExplicit"
+  importExplicit _ _ = internalError "Invalid argument to importExplicit"
 
   -- Find all exported data constructors for a given type
   allExportedDataConstructors :: ProperName -> [(ProperName, ModuleName)]
   allExportedDataConstructors name =
     case find ((== name) . fst . fst) (exportedTypes exps) of
-      Nothing -> error "Invalid state in allExportedDataConstructors"
+      Nothing -> internalError "Invalid state in allExportedDataConstructors"
       Just ((_, dctors), mn) -> map (, mn) dctors
 
   -- Add something to the Imports if it does not already exist there
-  updateImports :: (Ord a, Show a) => M.Map (Qualified a) (Qualified a, ModuleName)
-                                   -> [(a, ModuleName)]
-                                   -> a
-                                   -> m (M.Map (Qualified a) (Qualified a, ModuleName))
-  updateImports imps' exps' name = case M.lookup (Qualified impQual name) imps' of
+  updateImports :: (Ord a) => M.Map (Qualified a) (Qualified a, ModuleName)
+                              -> (a -> String)
+                              -> [(a, ModuleName)]
+                              -> a
+                              -> m (M.Map (Qualified a) (Qualified a, ModuleName))
+  updateImports imps' render exps' name = case M.lookup (Qualified impQual name) imps' of
 
     -- If the name is not already present add it to the list, after looking up
     -- where it was originally defined
     Nothing ->
-      let mnOrig = fromMaybe (error "Invalid state in updateImports") (name `lookup` exps')
+      let mnOrig = fromMaybe (internalError "Invalid state in updateImports") (name `lookup` exps')
       in return $ M.insert (Qualified impQual name) (Qualified (Just importModule) name, mnOrig) imps'
 
     -- If the name already is present check whether it's a duplicate import
@@ -191,12 +231,12 @@ resolveImport currentModule importModule exps imps impQual =
     -- re-exports A, importing A and B in C should not result in a "conflicting
     -- import for `x`" error
     Just (Qualified (Just mn) _, mnOrig)
-       | mnOrig == fromMaybe (error "Invalid state in updateImports") (name `lookup` exps') -> return imps'
+       | mnOrig == fromMaybe (internalError "Invalid state in updateImports") (name `lookup` exps') -> return imps'
        | otherwise -> throwError . errorMessage $ err
         where
         err = if currentModule `elem` [mn, importModule]
-              then ConflictingImport (show name) importModule
-              else ConflictingImports (show name) mn importModule
+              then ConflictingImport (render name) importModule
+              else ConflictingImports (render name) mn importModule
 
     Just (Qualified Nothing _, _) ->
-      error "Invalid state in updateImports"
+      internalError "Invalid state in updateImports"

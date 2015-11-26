@@ -2,40 +2,43 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE CPP #-}
 
 module Language.PureScript.Publish
   ( preparePackage
   , preparePackage'
   , PrepareM()
   , runPrepareM
+  , warn
+  , userError
+  , internalError
+  , otherError
   , PublishOptions(..)
   , defaultPublishOptions
   , getGitWorkingTreeStatus
-  , requireCleanWorkingTree
+  , checkCleanWorkingTree
   , getVersionFromGitTag
   , getBowerInfo
   , getModulesAndBookmarks
   , getResolvedDependencies
   ) where
 
-import Prelude hiding (userError)
+import Prelude ()
+import Prelude.Compat hiding (userError)
 
 import Data.Maybe
 import Data.Char (isSpace)
-import Data.String (fromString)
 import Data.List (stripPrefix, isSuffixOf, (\\), nubBy)
 import Data.List.Split (splitOn)
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Version
 import Data.Function (on)
+import Data.Foldable (traverse_)
 import Safe (headMay)
 import Data.Aeson.BetterErrors
 import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
+import qualified Data.Text.Lazy.Encoding as TL
 
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative
-#endif
 import Control.Category ((>>>))
 import Control.Arrow ((***))
 import Control.Exception (catch, try)
@@ -64,11 +67,14 @@ data PublishOptions = PublishOptions
   { -- | How to obtain the version tag and version that the data being
     -- generated will refer to.
     publishGetVersion :: PrepareM (String, Version)
+  , -- | What to do when the working tree is dirty
+    publishWorkingTreeDirty :: PrepareM ()
   }
 
 defaultPublishOptions :: PublishOptions
 defaultPublishOptions = PublishOptions
   { publishGetVersion = getVersionFromGitTag
+  , publishWorkingTreeDirty = userError DirtyWorkingTree
   }
 
 -- | Attempt to retrieve package metadata from the current directory.
@@ -120,10 +126,10 @@ preparePackage' opts = do
   exists <- liftIO (doesFileExist "bower.json")
   unless exists (userError BowerJSONNotFound)
 
-  requireCleanWorkingTree
+  checkCleanWorkingTree opts
 
   pkgMeta <- liftIO (Bower.decodeFile "bower.json")
-                    >>= flip catchLeft (userError . CouldntParseBowerJSON)
+                    >>= flip catchLeft (userError . CouldntDecodeBowerJSON)
   (pkgVersionTag, pkgVersion) <- publishGetVersion opts
   pkgGithub                   <- getBowerInfo pkgMeta
   (pkgBookmarks, pkgModules)  <- getModulesAndBookmarks
@@ -146,21 +152,21 @@ getModulesAndBookmarks = do
   renderModules bookmarks modules =
     return (bookmarks, map D.convertModule modules)
 
-data TreeStatus = Clean | Dirty deriving (Show, Eq, Ord, Enum)
+data TreeStatus = Clean | Dirty deriving (Show, Read, Eq, Ord, Enum)
 
 getGitWorkingTreeStatus :: PrepareM TreeStatus
 getGitWorkingTreeStatus = do
   out <- readProcess' "git" ["status", "--porcelain"] ""
   return $
-    if null . filter (not . null) . lines $ out
+    if all null . lines $ out
       then Clean
       else Dirty
 
-requireCleanWorkingTree :: PrepareM ()
-requireCleanWorkingTree = do
+checkCleanWorkingTree :: PublishOptions -> PrepareM ()
+checkCleanWorkingTree opts = do
   status <- getGitWorkingTreeStatus
   unless (status == Clean) $
-    userError DirtyWorkingTree
+    publishWorkingTreeDirty opts
 
 getVersionFromGitTag :: PrepareM (String, Version)
 getVersionFromGitTag = do
@@ -227,7 +233,7 @@ data DependencyStatus
   | ResolvedVersion String
     -- ^ Resolved to a version. The String argument is the resolution tag (eg,
     -- "v0.1.0").
-  deriving (Show, Eq)
+  deriving (Show, Read, Eq)
 
 -- Go through all bower dependencies which contain purescript code, and
 -- extract their versions.
@@ -245,7 +251,7 @@ data DependencyStatus
 getResolvedDependencies :: [PackageName] -> PrepareM [(PackageName, Version)]
 getResolvedDependencies declaredDeps = do
   bower <- findBowerExecutable
-  depsBS <- fromString <$> readProcess' bower ["list", "--json", "--offline"] ""
+  depsBS <- packUtf8 <$> readProcess' bower ["list", "--json", "--offline"] ""
 
   -- Check for undeclared dependencies
   toplevels <- catchJSON (parse asToplevelDependencies depsBS)
@@ -255,6 +261,7 @@ getResolvedDependencies declaredDeps = do
   handleDeps deps
 
   where
+  packUtf8 = TL.encodeUtf8 . TL.pack
   catchJSON = flip catchLeft (internalError . JSONError FromBowerList)
 
 findBowerExecutable :: PrepareM String
@@ -302,7 +309,7 @@ asDependencyStatus = do
 
 warnUndeclared :: [PackageName] -> [PackageName] -> PrepareM ()
 warnUndeclared declared actual =
-  mapM_ (warn . UndeclaredDependency) (actual \\ declared)
+  traverse_ (warn . UndeclaredDependency) (actual \\ declared)
 
 handleDeps ::
   [(PackageName, DependencyStatus)] -> PrepareM [(PackageName, Version)]
@@ -312,8 +319,8 @@ handleDeps deps = do
     (x:xs) ->
       userError (MissingDependencies (x :| xs))
     [] -> do
-      mapM_ (warn . NoResolvedVersion) noVersion
-      withVersions <- catMaybes <$> mapM tryExtractVersion' installed
+      traverse_ (warn . NoResolvedVersion) noVersion
+      withVersions <- catMaybes <$> traverse tryExtractVersion' installed
       filterM (liftIO . isPureScript . bowerDir . fst) withVersions
 
   where

@@ -14,18 +14,19 @@
 
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Language.PureScript.AST.Declarations where
+
+import Prelude ()
+import Prelude.Compat
+
+import Data.Aeson.TH
 
 import qualified Data.Data as D
 import qualified Data.Map as M
 
 import Control.Monad.Identity
-
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative
-#endif
 
 import Language.PureScript.AST.Binders
 import Language.PureScript.AST.Operators
@@ -42,7 +43,7 @@ import Language.PureScript.Environment
 -- a list of declarations, and a list of the declarations that are
 -- explicitly exported. If the export list is Nothing, everything is exported.
 --
-data Module = Module SourceSpan [Comment] ModuleName [Declaration] (Maybe [DeclarationRef]) deriving (Show, D.Data, D.Typeable)
+data Module = Module SourceSpan [Comment] ModuleName [Declaration] (Maybe [DeclarationRef]) deriving (Show, Read, D.Data, D.Typeable)
 
 -- | Return a module's name.
 getModuleName :: Module -> ModuleName
@@ -76,7 +77,7 @@ data DeclarationRef
   -- A declaration reference with source position information
   --
   | PositionedDeclarationRef SourceSpan [Comment] DeclarationRef
-  deriving (Show, D.Data, D.Typeable)
+  deriving (Show, Read, D.Data, D.Typeable)
 
 instance Eq DeclarationRef where
   (TypeRef name dctors)  == (TypeRef name' dctors') = name == name' && dctors == dctors'
@@ -108,7 +109,7 @@ data ImportDeclarationType
   -- An import with a list of references to hide: `import M hiding (foo)`
   --
   | Hiding [DeclarationRef]
-  deriving (Show, D.Data, D.Typeable)
+  deriving (Eq, Show, Read, D.Data, D.Typeable)
 
 -- |
 -- The data type of declarations
@@ -152,17 +153,14 @@ data Declaration
   --
   | ExternDataDeclaration ProperName Kind
   -- |
-  -- A type class instance foreign import
-  --
-  | ExternInstanceDeclaration Ident [Constraint] (Qualified ProperName) [Type]
-  -- |
   -- A fixity declaration (fixity data, operator name)
   --
   | FixityDeclaration Fixity String
   -- |
   -- A module import (module name, qualified/unqualified/hiding, optional "qualified as" name)
+  -- TODO: also a boolean specifying whether the old `qualified` syntax was used, so a warning can be raised in desugaring (remove for 0.9)
   --
-  | ImportDeclaration ModuleName ImportDeclarationType (Maybe ModuleName)
+  | ImportDeclaration ModuleName ImportDeclarationType (Maybe ModuleName) Bool
   -- |
   -- A type class declaration (name, argument, implies, member declarations)
   --
@@ -176,7 +174,7 @@ data Declaration
   -- A declaration with source position information
   --
   | PositionedDeclaration SourceSpan [Comment] Declaration
-  deriving (Show, D.Data, D.Typeable)
+  deriving (Show, Read, D.Data, D.Typeable)
 
 -- | The members of a type class instance declaration
 data TypeInstanceBody
@@ -184,7 +182,7 @@ data TypeInstanceBody
   = DerivedInstance
   -- | This is a regular (explicit) instance
   | ExplicitInstance [Declaration]
-  deriving (Show, D.Data, D.Typeable)
+  deriving (Show, Read, D.Data, D.Typeable)
 
 mapTypeInstanceBody :: ([Declaration] -> [Declaration]) -> TypeInstanceBody -> TypeInstanceBody
 mapTypeInstanceBody f = runIdentity . traverseTypeInstanceBody (Identity . f)
@@ -234,14 +232,6 @@ isExternDataDecl :: Declaration -> Bool
 isExternDataDecl ExternDataDeclaration{} = True
 isExternDataDecl (PositionedDeclaration _ _ d) = isExternDataDecl d
 isExternDataDecl _ = False
-
--- |
--- Test if a declaration is a type class instance foreign import
---
-isExternInstanceDecl :: Declaration -> Bool
-isExternInstanceDecl ExternInstanceDeclaration{} = True
-isExternInstanceDecl (PositionedDeclaration _ _ d) = isExternInstanceDecl d
-isExternInstanceDecl _ = False
 
 -- |
 -- Test if a declaration is a fixity declaration
@@ -423,7 +413,7 @@ data Expr
   -- |
   -- A value with source position information
   --
-  | PositionedValue SourceSpan [Comment] Expr deriving (Show, D.Data, D.Typeable)
+  | PositionedValue SourceSpan [Comment] Expr deriving (Show, Read, D.Data, D.Typeable)
 
 -- |
 -- An alternative in a case statement
@@ -437,7 +427,7 @@ data CaseAlternative = CaseAlternative
     -- The result expression or a collect of guarded expressions
     --
   , caseAlternativeResult :: Either [(Guard, Expr)] Expr
-  } deriving (Show, D.Data, D.Typeable)
+  } deriving (Show, Read, D.Data, D.Typeable)
 
 -- |
 -- A statement in a do-notation block
@@ -458,4 +448,7 @@ data DoNotationElement
   -- |
   -- A do notation element with source position information
   --
-  | PositionedDoNotationElement SourceSpan [Comment] DoNotationElement deriving (Show, D.Data, D.Typeable)
+  | PositionedDoNotationElement SourceSpan [Comment] DoNotationElement deriving (Show, Read, D.Data, D.Typeable)
+
+$(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''DeclarationRef)
+$(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''ImportDeclarationType)

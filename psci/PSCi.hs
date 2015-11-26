@@ -17,30 +17,28 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE CPP #-}
 
 module PSCi where
 
+import Prelude ()
+import Prelude.Compat
+
 import Data.Foldable (traverse_)
-import Data.List (intercalate, nub, sort)
-#if __GLASGOW_HASKELL__ < 710
-import Data.Traversable (traverse)
-#endif
+import Data.Maybe (mapMaybe)
+import Data.List (intersperse, intercalate, nub, sort)
 import Data.Tuple (swap)
 import Data.Version (showVersion)
 import qualified Data.Map as M
 
-import Control.Applicative
 import Control.Arrow (first)
 import Control.Monad
 import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.Trans.Class
-import Control.Monad.Trans.Except (runExceptT)
+import Control.Monad.Trans.Except (ExceptT(), runExceptT)
 import Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT)
 import Control.Monad.Trans.State.Strict
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Writer.Strict (runWriter)
-import qualified Control.Monad.Trans.State.Lazy as L
+import Control.Monad.Writer.Strict (Writer(), runWriter)
 
 import Options.Applicative as Opts
 
@@ -51,6 +49,7 @@ import System.FilePath (pathSeparator, (</>), isPathSeparator)
 import System.FilePath.Glob (glob)
 import System.Process (readProcessWithExitCode)
 import System.IO.Error (tryIOError)
+import qualified Text.PrettyPrint.Boxes as Box
 
 import qualified Language.PureScript as P
 import qualified Language.PureScript.Names as N
@@ -71,7 +70,7 @@ supportModule :: P.Module
 supportModule =
   case P.parseModulesFromFiles id [("", code)] of
     Right [(_, P.Module ss cs _ ds exps)] -> P.Module ss cs supportModuleName ds exps
-    _ -> error "Support module could not be parsed"
+    _ -> P.internalError "Support module could not be parsed"
   where
   code :: String
   code = unlines
@@ -243,7 +242,7 @@ createTemporaryModuleForImports PSCiState{psciImportedModules = imports} =
     P.Module (P.internalModuleSourceSpan "<internal>") [] moduleName (importDecl `map` imports) Nothing
 
 importDecl :: ImportedModule -> P.Declaration
-importDecl (mn, declType, asQ) = P.ImportDeclaration mn declType asQ
+importDecl (mn, declType, asQ) = P.ImportDeclaration mn declType asQ False
 
 indexFile :: FilePath
 indexFile = ".psci_modules" ++ pathSeparator : "index.js"
@@ -254,7 +253,7 @@ modulesDir = ".psci_modules" ++ pathSeparator : "node_modules"
 -- | This is different than the runMake in 'Language.PureScript.Make' in that it specifies the
 -- options and ignores the warning messages.
 runMake :: P.Make a -> IO (Either P.MultipleErrors a)
-runMake mk = fmap (fmap fst) $ P.runMake P.defaultOptions mk
+runMake mk = fst <$> P.runMake P.defaultOptions mk
 
 makeIO :: (IOError -> P.ErrorMessage) -> IO a -> P.Make a
 makeIO f io = do
@@ -263,10 +262,10 @@ makeIO f io = do
 
 make :: PSCiState -> [(Either P.RebuildPolicy FilePath, P.Module)] -> P.Make P.Environment
 make PSCiState{..} ms = P.make actions' (map snd (psciLoadedModules ++ ms))
-    where
-    filePathMap = M.fromList $ (first P.getModuleName . swap) `map` (psciLoadedModules ++ ms)
-    actions = P.buildMakeActions modulesDir filePathMap psciForeignFiles False
-    actions' = actions { P.progress = const (return ()) }
+  where
+  filePathMap = M.fromList $ (first P.getModuleName . swap) `map` (psciLoadedModules ++ ms)
+  actions = P.buildMakeActions modulesDir filePathMap psciForeignFiles False
+  actions' = actions { P.progress = const (return ()) }
 
 -- |
 -- Takes a value declaration and evaluates it with the current state.
@@ -377,20 +376,104 @@ handleTypeOf val = do
 -- Pretty print a module's signatures
 --
 printModuleSignatures :: P.ModuleName -> P.Environment -> PSCI ()
-printModuleSignatures moduleName env =
-  PSCI $ let namesEnv = P.names env
-             moduleNamesIdent = (filter ((== moduleName) . fst) . M.keys) namesEnv
-             in case moduleNamesIdent of
-                  [] -> outputStrLn $ "This module '"++ P.runModuleName moduleName ++"' does not export functions."
-                  _ -> ( outputStrLn
-                       . unlines
-                       . sort
-                       . map (showType . findType namesEnv)) moduleNamesIdent
-  where findType :: M.Map (P.ModuleName, P.Ident) (P.Type, P.NameKind, P.NameVisibility) -> (P.ModuleName, P.Ident) -> (P.Ident, Maybe (P.Type, P.NameKind, P.NameVisibility))
-        findType envNames m@(_, mIdent) = (mIdent, M.lookup m envNames)
-        showType :: (P.Ident, Maybe (P.Type, P.NameKind, P.NameVisibility)) -> String
-        showType (mIdent, Just (mType, _, _)) = show mIdent ++ " :: " ++ P.prettyPrintType mType
-        showType _ = error "The impossible happened in printModuleSignatures."
+printModuleSignatures moduleName (P.Environment {..}) =
+  PSCI $
+    -- get relevant components of a module from environment
+    let moduleNamesIdent = (filter ((== moduleName) . fst) . M.keys) names
+        moduleTypeClasses = (filter (\(P.Qualified maybeName _) -> maybeName == Just moduleName) . M.keys) typeClasses
+        moduleTypes = (filter (\(P.Qualified maybeName _) -> maybeName == Just moduleName) . M.keys) types
+
+  in
+    -- print each component
+    (outputStr . unlines . map trimEnd . lines . Box.render . Box.vsep 1 Box.left)
+      [ printModule's (mapMaybe (showTypeClass . findTypeClass typeClasses)) moduleTypeClasses -- typeClasses
+      , printModule's (mapMaybe (showType typeClasses dataConstructors typeSynonyms . findType types)) moduleTypes -- types
+      , printModule's (map (showNameType . findNameType names)) moduleNamesIdent -- functions
+      ]
+
+  where printModule's showF = Box.vsep 1 Box.left . showF
+
+        findNameType :: M.Map (P.ModuleName, P.Ident) (P.Type, P.NameKind, P.NameVisibility) -> (P.ModuleName, P.Ident) -> (P.Ident, Maybe (P.Type, P.NameKind, P.NameVisibility))
+        findNameType envNames m@(_, mIdent) = (mIdent, M.lookup m envNames)
+
+        showNameType :: (P.Ident, Maybe (P.Type, P.NameKind, P.NameVisibility)) -> Box.Box
+        showNameType (mIdent, Just (mType, _, _)) = Box.text (P.showIdent mIdent ++ " :: ") Box.<> P.typeAsBox mType
+        showNameType _ = P.internalError "The impossible happened in printModuleSignatures."
+
+        findTypeClass :: M.Map (P.Qualified P.ProperName) ([(String, Maybe P.Kind)], [(P.Ident, P.Type)], [P.Constraint]) -> P.Qualified P.ProperName -> (P.Qualified P.ProperName, Maybe ([(String, Maybe P.Kind)], [(P.Ident, P.Type)], [P.Constraint]))
+        findTypeClass envTypeClasses name = (name, M.lookup name envTypeClasses)
+
+        showTypeClass :: (P.Qualified P.ProperName, Maybe ([(String, Maybe P.Kind)], [(P.Ident, P.Type)], [P.Constraint])) -> Maybe Box.Box
+        showTypeClass (_, Nothing) = Nothing
+        showTypeClass (P.Qualified _ name, Just (vars, body, constrs)) =
+            let constraints =
+                    if null constrs
+                    then Box.text ""
+                    else Box.text "("
+                         Box.<> Box.hcat Box.left (intersperse (Box.text ", ") $ map (\(P.Qualified _ pn, lt) -> Box.text (P.runProperName pn) Box.<+> Box.hcat Box.left (map P.typeAtomAsBox lt)) constrs)
+                         Box.<> Box.text ") <= "
+                className =
+                    Box.text (P.runProperName name)
+                    Box.<> Box.text (concatMap ((' ':) . fst) vars)
+                classBody =
+                    Box.vcat Box.top (map (\(i, t) -> Box.text (P.showIdent i ++ " ::") Box.<+> P.typeAsBox t) body)
+
+            in
+              Just $
+                (Box.text "class "
+                Box.<> constraints
+                Box.<> className
+                Box.<+> if null body then Box.text "" else Box.text "where")
+                Box.// Box.moveRight 2 classBody
+
+
+        findType :: M.Map (P.Qualified P.ProperName) (P.Kind, P.TypeKind) -> P.Qualified P.ProperName -> (P.Qualified P.ProperName, Maybe (P.Kind, P.TypeKind))
+        findType envTypes name = (name, M.lookup name envTypes)
+
+        showType :: M.Map (P.Qualified P.ProperName) ([(String, Maybe P.Kind)], [(P.Ident, P.Type)], [P.Constraint])
+                 -> M.Map (P.Qualified P.ProperName) (P.DataDeclType, P.ProperName, P.Type, [P.Ident])
+                 -> M.Map (P.Qualified P.ProperName) ([(String, Maybe P.Kind)], P.Type)
+                 -> (P.Qualified P.ProperName, Maybe (P.Kind, P.TypeKind))
+                 -> Maybe Box.Box
+        showType typeClassesEnv dataConstructorsEnv typeSynonymsEnv (n@(P.Qualified modul name), typ) =
+          case (typ, M.lookup n typeSynonymsEnv) of
+            (Just (_, P.TypeSynonym), Just (typevars, dtType)) ->
+                if M.member n typeClassesEnv
+                then
+                  Nothing
+                else
+                  Just $
+                    Box.text ("type " ++ P.runProperName name ++ concatMap ((' ':) . fst) typevars)
+                    Box.// Box.moveRight 2 (Box.text "=" Box.<+> P.typeAsBox dtType)
+
+            (Just (_, P.DataType typevars pt), _) ->
+              let prefix =
+                    case pt of
+                      [(dtProperName,_)] ->
+                        case M.lookup (P.Qualified modul dtProperName) dataConstructorsEnv of
+                          Just (dataDeclType, _, _, _) -> P.showDataDeclType dataDeclType
+                          _ -> "data"
+                      _ -> "data"
+
+              in
+                Just $ Box.text (prefix ++ " " ++ P.runProperName name ++ concatMap ((' ':) . fst) typevars) Box.// printCons pt
+
+            _ ->
+              Nothing
+
+          where printCons pt =
+                    Box.moveRight 2 $
+                    Box.vcat Box.left $
+                    mapFirstRest (Box.text "=" Box.<+>) (Box.text "|" Box.<+>) $
+                    map (\(cons,idents) -> (Box.text (P.runProperName cons) Box.<> Box.hcat Box.left (map prettyPrintType idents))) pt
+
+                prettyPrintType t = Box.text " " Box.<> P.typeAtomAsBox t
+
+                mapFirstRest _ _ [] = []
+                mapFirstRest f g (x:xs) = f x : map g xs
+
+        trimEnd = reverse . dropWhile (== ' ') . reverse
+
 
 -- |
 -- Browse a module and displays its signature (if module exists).
@@ -424,8 +507,11 @@ handleKindOf typ = do
     Right env' ->
       case M.lookup (P.Qualified (Just mName) $ P.ProperName "IT") (P.typeSynonyms env') of
         Just (_, typ') -> do
-          let chk = P.CheckState env' 0 0 (Just mName)
-              k   = fst . runWriter . runExceptT $ L.runStateT (P.unCheck (P.kindOf mName typ')) chk
+          let chk = (P.emptyCheckState env') { P.checkCurrentModule = Just mName }
+              k   = check (P.kindOf typ') chk
+
+              check :: StateT P.CheckState (ExceptT P.MultipleErrors (Writer P.MultipleErrors)) a -> P.CheckState -> Either P.MultipleErrors (a, P.CheckState)
+              check sew cs = fst . runWriter . runExceptT . runStateT sew $ cs
           case k of
             Left errStack   -> PSCI . outputStrLn . P.prettyPrintMultipleErrors False $ errStack
             Right (kind, _) -> PSCI . outputStrLn . P.prettyPrintKind $ kind
@@ -437,13 +523,13 @@ handleKindOf typ = do
 -- Parses the input and returns either a Metacommand, or an error as a string.
 --
 getCommand :: Bool -> InputT (StateT PSCiState IO) (Either String (Maybe Command))
-getCommand singleLineMode = do
-  firstLine <- getInputLine "> "
+getCommand singleLineMode = handleInterrupt (return (Right Nothing)) $ do
+  firstLine <- withInterrupt $ getInputLine "> "
   case firstLine of
-    Nothing -> return (Right Nothing)
+    Nothing -> return (Right (Just QuitPSCi)) -- Ctrl-D when input is empty
     Just "" -> return (Right Nothing)
-    Just s | singleLineMode || head s == ':' -> return . either Left (Right . Just) $ parseCommand s
-    Just s -> either Left (Right . Just) . parseCommand <$> go [s]
+    Just s | singleLineMode || head s == ':' -> return .fmap Just $ parseCommand s
+    Just s -> fmap Just . parseCommand <$> go [s]
   where
     go :: [String] -> InputT (StateT PSCiState IO) String
     go ls = maybe (return . unlines $ reverse ls) (go . (:ls)) =<< getInputLine "  "
@@ -464,7 +550,7 @@ handleCommand (LoadFile filePath) = whenFileExists filePath $ \absPath -> do
     Right mods -> PSCI . lift $ modify (updateModules (map ((,) (Right absPath)) mods))
 handleCommand (LoadForeign filePath) = whenFileExists filePath $ \absPath -> do
   foreignsOrError <- psciIO . runMake $ do
-    foreignFile <- makeIO (const (P.SimpleErrorWrapper $ P.CannotReadFile absPath)) (readFile absPath)
+    foreignFile <- makeIO (const (P.ErrorMessage [] $ P.CannotReadFile absPath)) (readFile absPath)
     P.parseForeignModulesFromFiles [(absPath, foreignFile)]
   case foreignsOrError of
     Left err -> PSCI $ outputStrLn $ P.prettyPrintMultipleErrors False err
@@ -482,7 +568,7 @@ handleCommand (KindOf typ) = handleKindOf typ
 handleCommand (BrowseModule moduleName) = handleBrowse moduleName
 handleCommand (ShowInfo QueryLoaded) = handleShowLoadedModules
 handleCommand (ShowInfo QueryImport) = handleShowImportedModules
-handleCommand QuitPSCi = error "`handleCommand QuitPSCi` was called. This is a bug."
+handleCommand QuitPSCi = P.internalError "`handleCommand QuitPSCi` was called. This is a bug."
 
 whenFileExists :: FilePath -> (FilePath -> PSCI ()) -> PSCI ()
 whenFileExists filePath f = do
@@ -507,7 +593,7 @@ loadUserConfig = onFirstFileMatching readCommands pathGetters
     if exists
     then do
       ls <- lines <$> readFile configFile
-      case mapM parseCommand ls of
+      case traverse parseCommand ls of
         Left err -> print err >> exitFailure
         Right cs -> return $ Just cs
     else
@@ -524,8 +610,8 @@ consoleIsDefined = any ((== P.ModuleName (map P.ProperName [ "Control", "Monad",
 loop :: PSCiOptions -> IO ()
 loop PSCiOptions{..} = do
   config <- loadUserConfig
-  inputFiles <- concat <$> mapM glob psciInputFile
-  foreignFiles <- concat <$> mapM glob psciForeignInputFiles
+  inputFiles <- concat <$> traverse glob psciInputFile
+  foreignFiles <- concat <$> traverse glob psciForeignInputFiles
   modulesOrFirstError <- loadAllModules inputFiles
   case modulesOrFirstError of
     Left errs -> putStrLn (P.prettyPrintMultipleErrors False errs) >> exitFailure
@@ -533,14 +619,14 @@ loop PSCiOptions{..} = do
       historyFilename <- getHistoryFilename
       let settings = defaultSettings { historyFile = Just historyFilename }
       foreignsOrError <- runMake $ do
-        foreignFilesContent <- forM foreignFiles (\inFile -> (inFile,) <$> makeIO (const (P.SimpleErrorWrapper $ P.CannotReadFile inFile)) (readFile inFile))
+        foreignFilesContent <- forM foreignFiles (\inFile -> (inFile,) <$> makeIO (const (P.ErrorMessage [] $ P.CannotReadFile inFile)) (readFile inFile))
         P.parseForeignModulesFromFiles foreignFilesContent
       case foreignsOrError of
         Left errs -> putStrLn (P.prettyPrintMultipleErrors False errs) >> exitFailure
         Right foreigns ->
           flip evalStateT (PSCiState inputFiles [] modules foreigns [] psciInputNodeFlags) . runInputT (setComplete completion settings) $ do
             outputStrLn prologueMessage
-            traverse_ (mapM_ (runPSCI . handleCommand)) config
+            traverse_ (traverse_ (runPSCI . handleCommand)) config
             modules' <- lift $ gets psciLoadedModules
             unless (consoleIsDefined (map snd modules')) . outputStrLn $ unlines
               [ "PSCi requires the purescript-console module to be installed."
@@ -555,7 +641,10 @@ loop PSCiOptions{..} = do
             Left err -> outputStrLn err >> go
             Right Nothing -> go
             Right (Just QuitPSCi) -> outputStrLn quitMessage
-            Right (Just c') -> runPSCI (loadAllImportedModules >> handleCommand c') >> go
+            Right (Just c') -> do
+              handleInterrupt (outputStrLn "Interrupted.")
+                              (withInterrupt (runPSCI (loadAllImportedModules >> handleCommand c')))
+              go
 
 multiLineMode :: Parser Bool
 multiLineMode = switch $

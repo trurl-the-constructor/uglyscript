@@ -16,19 +16,19 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE CPP #-}
 
 module Language.PureScript.Sugar.CaseDeclarations (
     desugarCases,
     desugarCasesModule
 ) where
 
+import Prelude ()
+import Prelude.Compat
+
+import Language.PureScript.Crash
 import Data.Maybe (catMaybes)
 import Data.List (nub, groupBy)
 
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative
-#endif
 import Control.Monad ((<=<), forM, replicateM, join, unless)
 import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.Supply.Class
@@ -50,7 +50,7 @@ isLeft (Right _) = False
 --
 desugarCasesModule :: (Functor m, Applicative m, MonadSupply m, MonadError MultipleErrors m) => [Module] -> m [Module]
 desugarCasesModule ms = forM ms $ \(Module ss coms name ds exps) ->
-  rethrow (onErrorMessages (ErrorInModule name)) $
+  rethrow (addHint (ErrorInModule name)) $
     Module ss coms name <$> (desugarCases <=< desugarAbs $ ds) <*> pure exps
 
 desugarAbs :: (Functor m, Applicative m, MonadSupply m, MonadError MultipleErrors m) => [Declaration] -> m [Declaration]
@@ -104,13 +104,15 @@ toDecls [ValueDeclaration ident nameKind bs (Right val)] | all isVarBinder bs = 
   isVarBinder NullBinder = True
   isVarBinder (VarBinder _) = True
   isVarBinder (PositionedBinder _ _ b) = isVarBinder b
+  isVarBinder (TypedBinder _ b) = isVarBinder b
   isVarBinder _ = False
 
   fromVarBinder :: Binder -> m Ident
   fromVarBinder NullBinder = Ident <$> freshName
   fromVarBinder (VarBinder name) = return name
   fromVarBinder (PositionedBinder _ _ b) = fromVarBinder b
-  fromVarBinder _ = error "fromVarBinder: Invalid argument"
+  fromVarBinder (TypedBinder _ b) = fromVarBinder b
+  fromVarBinder _ = internalError "fromVarBinder: Invalid argument"
 toDecls ds@(ValueDeclaration ident _ bs result : _) = do
   let tuples = map toTuple ds
   unless (all ((== length bs) . length . fst) tuples) $
@@ -127,7 +129,7 @@ toDecls ds = return ds
 toTuple :: Declaration -> ([Binder], Either [(Guard, Expr)] Expr)
 toTuple (ValueDeclaration _ _ bs result) = (bs, result)
 toTuple (PositionedDeclaration _ _ d) = toTuple d
-toTuple _ = error "Not a value declaration"
+toTuple _ = internalError "Not a value declaration"
 
 makeCaseDeclaration :: forall m. (Functor m, Applicative m, MonadSupply m, MonadError MultipleErrors m) => Ident -> [([Binder], Either [(Guard, Expr)] Expr)] -> m Declaration
 makeCaseDeclaration ident alternatives = do

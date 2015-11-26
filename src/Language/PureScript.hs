@@ -15,7 +15,6 @@
 
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Language.PureScript
@@ -26,6 +25,7 @@ module Language.PureScript
 import Data.Version (Version)
 
 import Language.PureScript.AST as P
+import Language.PureScript.Crash as P
 import Language.PureScript.Comments as P
 import Language.PureScript.Environment as P
 import Language.PureScript.Errors as P hiding (indent)

@@ -1,5 +1,3 @@
-{-# LANGUAGE CPP #-}
-
 -- | Functions for producing RenderedCode values from PureScript Type values.
 
 module Language.PureScript.Docs.RenderedCode.Render (
@@ -11,17 +9,17 @@ module Language.PureScript.Docs.RenderedCode.Render (
     defaultRenderTypeOptions,
     renderTypeWithOptions
 ) where
+  
+import Prelude ()
+import Prelude.Compat
 
-#if __GLASGOW_HASKELL__ < 710
-import Data.Monoid ((<>), mconcat, mempty)
-#else
 import Data.Monoid ((<>))
-#endif
 import Data.Maybe (fromMaybe)
 
 import Control.Arrow ((<+>))
 import Control.PatternArrows
 
+import Language.PureScript.Crash
 import Language.PureScript.Names
 import Language.PureScript.Types
 import Language.PureScript.Kinds
@@ -45,7 +43,7 @@ typeLiterals = mkPattern match
               , syntax "}"
               ]
   match (TypeConstructor (Qualified mn name)) =
-    Just (ctor (show name) (maybeToContainingModule mn))
+    Just (ctor (runProperName name) (maybeToContainingModule mn))
   match (ConstrainedType deps ty) =
     Just $ mintersperse sp
             [ syntax "(" <> constraints <> syntax ")"
@@ -163,7 +161,7 @@ renderKind = kind . prettyPrintKind
 --
 renderTypeAtom :: Type -> RenderedCode
 renderTypeAtom =
-  fromMaybe (error "Incomplete pattern") . pattern matchTypeAtom () . preprocessType defaultRenderTypeOptions
+  fromMaybe (internalError "Incomplete pattern") . pattern matchTypeAtom () . preprocessType defaultRenderTypeOptions
 
 
 -- |
@@ -181,4 +179,4 @@ defaultRenderTypeOptions = RenderTypeOptions { prettyPrintObjects = True }
 
 renderTypeWithOptions :: RenderTypeOptions -> Type -> RenderedCode
 renderTypeWithOptions opts =
-  fromMaybe (error "Incomplete pattern") . pattern matchType () . preprocessType opts
+  fromMaybe (internalError "Incomplete pattern") . pattern matchType () . preprocessType opts

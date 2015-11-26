@@ -19,7 +19,8 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Language.PureScript.Make
   (
@@ -36,28 +37,35 @@ module Language.PureScript.Make
   , buildMakeActions
   ) where
 
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative
-#endif
-import Control.Arrow ((&&&))
-import Control.Monad
-import Control.Monad.Error.Class (MonadError(..))
-import Control.Monad.Trans.Except
-import Control.Monad.Reader
-import Control.Monad.Writer.Strict
-import Control.Monad.Supply
+import Prelude ()
+import Prelude.Compat
 
-import Data.Function (on)
-import Data.List (sortBy, groupBy)
-import Data.Maybe (fromMaybe)
+import Control.Monad hiding (sequence)
+import Control.Monad.Error.Class (MonadError(..))
+import Control.Monad.Writer.Class (MonadWriter(..))
+import Control.Monad.Trans.Class (MonadTrans(..))
+import Control.Monad.Trans.Except
+import Control.Monad.IO.Class
+import Control.Monad.Reader (MonadReader(..), ReaderT(..))
+import Control.Monad.Logger
+import Control.Monad.Supply
+import Control.Monad.Base (MonadBase(..))
+import Control.Monad.Trans.Control (MonadBaseControl(..))
+
+import Control.Concurrent.Lifted as C
+
+import Data.List (foldl', sort)
+import Data.Maybe (fromMaybe, catMaybes)
 import Data.Time.Clock
+import Data.String (fromString)
 import Data.Foldable (for_)
-#if __GLASGOW_HASKELL__ < 710
-import Data.Traversable (traverse)
-#endif
+import Data.Traversable (for)
 import Data.Version (showVersion)
-import qualified Data.Map as M
+import Data.Aeson (encode, decode)
+import qualified Data.ByteString.Lazy as B
+import qualified Data.ByteString.UTF8 as BU8
 import qualified Data.Set as S
+import qualified Data.Map as M
 
 import qualified Debug.Trace as Trace
 
@@ -65,16 +73,17 @@ import System.Directory
        (doesFileExist, getModificationTime, createDirectoryIfMissing)
 import System.FilePath ((</>), takeDirectory)
 import System.IO.Error (tryIOError)
+import System.IO.UTF8 (readUTF8File, writeUTF8File)
 
+import Language.PureScript.Crash
 import Language.PureScript.AST
-import Language.PureScript.CodeGen.Externs (moduleToPs)
+import Language.PureScript.Externs
 import Language.PureScript.Environment
 import Language.PureScript.Errors
 import Language.PureScript.Linter
 import Language.PureScript.ModuleDependencies
 import Language.PureScript.Names
 import Language.PureScript.Options
-import Language.PureScript.Parser
 import Language.PureScript.Pretty
 import Language.PureScript.Pretty.CoreFn
 import Language.PureScript.Primitives
@@ -90,7 +99,7 @@ import qualified Paths_purescript as Paths
 -- | Progress messages from the make process
 data ProgressMessage
   = CompilingModule ModuleName
-  deriving (Show, Eq, Ord)
+  deriving (Show, Read, Eq, Ord)
 
 -- | Render a progress message
 renderProgressMessage :: ProgressMessage -> String
@@ -120,7 +129,7 @@ data MakeActions m = MakeActions {
   -- |
   -- Read the externs file for a module as a string and also return the actual
   -- path for the file.
-  , readExterns :: ModuleName -> m (FilePath, String)
+  , readExterns :: ModuleName -> m (FilePath, Externs)
   -- |
   -- Run the code generator for the module and write any required output files.
   --
@@ -143,7 +152,7 @@ data RebuildPolicy
   -- | Never rebuild this module
   = RebuildNever
   -- | Always rebuild this module
-  | RebuildAlways deriving (Show, Eq, Ord)
+  | RebuildAlways deriving (Show, Read, Eq, Ord)
 
 -- |
 -- Compiles in "make" mode, compiling each module separately to a js files and an externs file
@@ -151,71 +160,115 @@ data RebuildPolicy
 -- If timestamps have not changed, the externs file can be used to provide the module's types without
 -- having to typecheck the module again.
 --
-make :: forall m. (Functor m, Applicative m, Monad m, MonadReader Options m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+make :: forall m. (Functor m, Applicative m, Monad m, MonadBaseControl IO m, MonadReader Options m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
      => MakeActions m
      -> [Module]
      -> m Environment
 make MakeActions{..} ms = do
-  (sorted, graph) <- sortModules $ map importPrim ms
-  toRebuild <- foldM (\s (Module _ _ moduleName' _ _) -> do
-    inputTimestamp <- getInputTimestamp moduleName'
-    outputTimestamp <- getOutputTimestamp moduleName'
-    return $ case (inputTimestamp, outputTimestamp) of
-      (Right (Just t1), Just t2) | t1 < t2 -> s
-      (Left RebuildNever, Just _) -> s
-      _ -> S.insert moduleName' s) S.empty sorted
+  checkModuleNamesAreUnique
 
-  marked <- rebuildIfNecessary (reverseDependencies graph) toRebuild sorted
-  for_ marked $ \(willRebuild, m) -> when willRebuild (lint m)
-  (desugared, nextVar) <- runSupplyT 0 $ zip (map fst marked) <$> desugar (map snd marked)
-  evalSupplyT nextVar $ go initEnvironment desugared
+  (sorted, graph) <- sortModules ms
+
+  barriers <- zip (map getModuleName sorted) <$> replicateM (length ms) ((,) <$> C.newEmptyMVar <*> C.newEmptyMVar)
+
+  for_ sorted $ \m -> fork $ do
+    let deps = fromMaybe (internalError "make: module not found in dependency graph.") (lookup (getModuleName m) graph)
+    buildModule barriers (importPrim m) (deps `inOrderOf` map getModuleName sorted)
+
+  -- Wait for all threads to complete, and collect errors.
+  errors <- catMaybes <$> for barriers (takeMVar . snd . snd)
+
+  -- All threads have completed, rethrow any caught errors.
+  unless (null errors) $ throwError (mconcat errors)
+
+  -- Bundle up all the externs and return them as an Environment
+  (_, externs) <- unzip . fromMaybe (internalError "make: externs were missing but no errors reported.") . sequence <$> for barriers (takeMVar . fst . snd)
+  return $ foldl' (flip applyExternsFileToEnvironment) initEnvironment externs
+
   where
+  checkModuleNamesAreUnique :: m ()
+  checkModuleNamesAreUnique =
+    case findDuplicate (map getModuleName ms) of
+      Nothing -> return ()
+      Just mn -> throwError . errorMessage $ DuplicateModuleName mn
 
-  go :: Environment -> [(Bool, Module)] -> SupplyT m Environment
-  go env [] = return env
-  go env ((False, m) : ms') = do
-    (_, env') <- lift . runCheck' env $ typeCheckModule Nothing m
-    go env' ms'
-  go env ((True, m@(Module ss coms moduleName' _ exps)) : ms') = do
-    lift . progress $ CompilingModule moduleName'
-    (checked@(Module _ _ _ elaborated _), env') <- lift . runCheck' env $ typeCheckModule Nothing m
-    checkExhaustiveModule env' checked
-    regrouped <- createBindingGroups moduleName' . collapseBindingGroups $ elaborated
-    let mod' = Module ss coms moduleName' regrouped exps
-        corefn = CF.moduleToCoreFn env' mod'
-        [renamed] = renameInModules [corefn]
-        exts = moduleToPs mod' env'
-    --
-    Trace.traceM ("\nRenamed core module " ++ show moduleName' ++ ":\n")
-    Trace.traceM (prettyPrintModule renamed)
-    --
-
-    codegen renamed env' exts
-    go env' ms'
-
-  rebuildIfNecessary :: M.Map ModuleName [ModuleName] -> S.Set ModuleName -> [Module] -> m [(Bool, Module)]
-  rebuildIfNecessary _ _ [] = return []
-  rebuildIfNecessary graph toRebuild (m@(Module _ _ moduleName' _ _) : ms') | moduleName' `S.member` toRebuild = do
-    let deps = fromMaybe [] $ moduleName' `M.lookup` graph
-        toRebuild' = toRebuild `S.union` S.fromList deps
-    (:) (True, m) <$> rebuildIfNecessary graph toRebuild' ms'
-  rebuildIfNecessary graph toRebuild (Module _ _ moduleName' _ _ : ms') = do
-    (path, externs) <- readExterns moduleName'
-    externsModules <- fmap (map snd) . alterErrors $ parseModulesFromFiles id [(path, externs)]
-    case externsModules of
-      [m'@(Module _ _ moduleName'' _ _)] | moduleName'' == moduleName' -> (:) (False, m') <$> rebuildIfNecessary graph toRebuild ms'
-      _ -> throwError . errorMessage . InvalidExternsFile $ path
+  -- Verify that a list of values has unique keys
+  findDuplicate :: (Ord a) => [a] -> Maybe a
+  findDuplicate = go . sort
     where
-    alterErrors = flip catchError $ \(MultipleErrors errs) ->
-      throwError . MultipleErrors $ flip map errs $ \e -> case e of
-        SimpleErrorWrapper (ErrorParsingModule err) -> SimpleErrorWrapper (ErrorParsingExterns err)
-        _ -> e
+    go (x : y : xs)
+      | x == y = Just x
+      | otherwise = go (y : xs)
+    go _ = Nothing
 
-reverseDependencies :: ModuleGraph -> M.Map ModuleName [ModuleName]
-reverseDependencies g = combine [ (dep, mn) | (mn, deps) <- g, dep <- deps ]
-  where
-  combine :: (Ord a) => [(a, b)] -> M.Map a [b]
-  combine = M.fromList . map ((fst . head) &&& map snd) . groupBy ((==) `on` fst) . sortBy (compare `on` fst)
+  -- Sort a list so its elements appear in the same order as in another list.
+  inOrderOf :: (Ord a) => [a] -> [a] -> [a]
+  inOrderOf xs ys = let s = S.fromList xs in filter (`S.member` s) ys
+
+  buildModule :: [(ModuleName, (C.MVar (Maybe (MultipleErrors, ExternsFile)), C.MVar (Maybe MultipleErrors)))] -> Module -> [ModuleName] -> m ()
+  buildModule barriers m@(Module _ _ moduleName _ _) deps = flip catchError (markComplete Nothing . Just) $ do
+    -- We need to wait for dependencies to be built, before checking if the current
+    -- module should be rebuilt, so the first thing to do is to wait on the
+    -- MVars for the module's dependencies.
+    mexterns <- fmap unzip . sequence <$> traverse (readMVar . fst . fromMaybe (internalError "make: no barrier") . flip lookup barriers) deps
+
+    case mexterns of
+      Just (_, externs) -> do
+        outputTimestamp <- getOutputTimestamp moduleName
+        dependencyTimestamp <- maximumMaybe <$> traverse (fmap shouldExist . getOutputTimestamp) deps
+        inputTimestamp <- getInputTimestamp moduleName
+
+        let shouldRebuild = case (inputTimestamp, dependencyTimestamp, outputTimestamp) of
+                              (Right (Just t1), Just t3, Just t2) -> t1 > t2 || t3 > t2
+                              (Right (Just t1), Nothing, Just t2) -> t1 > t2
+                              (Left RebuildNever, _, Just _) -> False
+                              _ -> True
+
+        let rebuild = do
+              (exts, warnings) <- listen $ do
+                progress $ CompilingModule moduleName
+                let env = foldl' (flip applyExternsFileToEnvironment) initEnvironment externs
+                lint m
+                ([desugared], nextVar) <- runSupplyT 0 $ desugar externs [m]
+                (checked@(Module ss coms _ elaborated exps), env') <- runCheck' env $ typeCheckModule desugared
+                checkExhaustiveModule env' checked
+                regrouped <- createBindingGroups moduleName . collapseBindingGroups $ elaborated
+                let mod' = Module ss coms moduleName regrouped exps
+                    corefn = CF.moduleToCoreFn env' mod'
+                    [renamed] = renameInModules [corefn]
+                    exts = moduleToExternsFile mod' env'
+                evalSupplyT nextVar . codegen renamed env' . BU8.toString . B.toStrict . encode $ exts
+                return exts
+              markComplete (Just (warnings, exts)) Nothing
+
+        if shouldRebuild
+          then rebuild
+          else do
+            mexts <- decodeExterns . snd <$> readExterns moduleName
+            case mexts of
+              Just exts -> markComplete (Just (mempty, exts)) Nothing
+              Nothing -> rebuild
+      Nothing -> markComplete Nothing Nothing
+    where
+    markComplete :: Maybe (MultipleErrors, ExternsFile) -> Maybe MultipleErrors -> m ()
+    markComplete externs errors = do
+      putMVar (fst $ fromMaybe (internalError "make: no barrier") $ lookup moduleName barriers) externs
+      putMVar (snd $ fromMaybe (internalError "make: no barrier") $ lookup moduleName barriers) errors
+
+  maximumMaybe :: (Ord a) => [a] -> Maybe a
+  maximumMaybe [] = Nothing
+  maximumMaybe xs = Just $ maximum xs
+
+  -- Make sure a dependency exists
+  shouldExist :: Maybe UTCTime -> UTCTime
+  shouldExist (Just t) = t
+  shouldExist _ = internalError "make: dependency should already have been built."
+
+  decodeExterns :: Externs -> Maybe ExternsFile
+  decodeExterns bs = do
+    externs <- decode (fromString bs)
+    guard $ efVersion externs == showVersion Paths.version
+    return externs
 
 -- |
 -- Add an import declaration for a module if it does not already explicitly import it.
@@ -223,9 +276,9 @@ reverseDependencies g = combine [ (dep, mn) | (mn, deps) <- g, dep <- deps ]
 addDefaultImport :: ModuleName -> Module -> Module
 addDefaultImport toImport m@(Module ss coms mn decls exps)  =
   if isExistingImport `any` decls || mn == toImport then m
-  else Module ss coms mn (ImportDeclaration toImport Implicit Nothing : decls) exps
+  else Module ss coms mn (ImportDeclaration toImport Implicit Nothing False : decls) exps
   where
-  isExistingImport (ImportDeclaration mn' _ _) | mn' == toImport = True
+  isExistingImport (ImportDeclaration mn' _ _ _) | mn' == toImport = True
   isExistingImport (PositionedDeclaration _ _ d) = isExistingImport d
   isExistingImport _ = False
 
@@ -235,14 +288,22 @@ importPrim = addDefaultImport (ModuleName [ProperName C.prim])
 -- |
 -- A monad for running make actions
 --
-newtype Make a = Make { unMake :: ReaderT Options (WriterT MultipleErrors (ExceptT MultipleErrors IO)) a }
+newtype Make a = Make { unMake :: ReaderT Options (ExceptT MultipleErrors (Logger MultipleErrors)) a }
   deriving (Functor, Applicative, Monad, MonadIO, MonadError MultipleErrors, MonadWriter MultipleErrors, MonadReader Options)
+
+instance MonadBase IO Make where
+  liftBase = liftIO
+
+instance MonadBaseControl IO Make where
+  type StM Make a = Either MultipleErrors a
+  liftBaseWith f = Make $ liftBaseWith $ \q -> f (q . unMake)
+  restoreM = Make . restoreM
 
 -- |
 -- Execute a 'Make' monad, returning either errors, or the result of the compile plus any warnings.
 --
-runMake :: Options -> Make a -> IO (Either MultipleErrors (a, MultipleErrors))
-runMake opts = runExceptT . runWriterT . flip runReaderT opts . unMake
+runMake :: Options -> Make a -> IO (Either MultipleErrors a, MultipleErrors)
+runMake opts = runLogger' . runExceptT . flip runReaderT opts . unMake
 
 makeIO :: (IOError -> ErrorMessage) -> IO a -> Make a
 makeIO f io = do
@@ -268,7 +329,7 @@ buildMakeActions outputDir filePathMap foreigns usePrefix =
 
   getInputTimestamp :: ModuleName -> Make (Either RebuildPolicy (Maybe UTCTime))
   getInputTimestamp mn = do
-    let path = fromMaybe (error "Module has no filename in 'make'") $ M.lookup mn filePathMap
+    let path = fromMaybe (internalError "Module has no filename in 'make'") $ M.lookup mn filePathMap
     e1 <- traverseEither getTimestamp path
     fPath <- maybe (return Nothing) getTimestamp $ M.lookup mn foreigns
     return $ fmap (max fPath) e1
@@ -277,12 +338,12 @@ buildMakeActions outputDir filePathMap foreigns usePrefix =
   getOutputTimestamp mn = do
     let filePath = runModuleName mn
         jsFile = outputDir </> filePath </> "index.js"
-        externsFile = outputDir </> filePath </> "externs.purs"
+        externsFile = outputDir </> filePath </> "externs.json"
     min <$> getTimestamp jsFile <*> getTimestamp externsFile
 
-  readExterns :: ModuleName -> Make (FilePath, String)
+  readExterns :: ModuleName -> Make (FilePath, Externs)
   readExterns mn = do
-    let path = outputDir </> runModuleName mn </> "externs.purs"
+    let path = outputDir </> runModuleName mn </> "externs.json"
     (path, ) <$> readTextFile path
 
   codegen :: CF.Module CF.Ann -> Environment -> Externs -> SupplyT Make ()
@@ -299,12 +360,12 @@ buildMakeActions outputDir filePathMap foreigns usePrefix =
     pjs <- prettyPrintJS <$> J.moduleToJs m foreignInclude
     let filePath = runModuleName mn
         jsFile = outputDir </> filePath </> "index.js"
-        externsFile = outputDir </> filePath </> "externs.purs"
+        externsFile = outputDir </> filePath </> "externs.json"
         foreignFile = outputDir </> filePath </> "foreign.js"
         prefix = ["Generated by psc version " ++ showVersion Paths.version | usePrefix]
         js = unlines $ map ("// " ++) prefix ++ [pjs]
     lift $ do
-      writeTextFile jsFile js
+      writeTextFile jsFile (fromString js)
       for_ (mn `M.lookup` foreigns) (readTextFile >=> writeTextFile foreignFile)
       writeTextFile externsFile exts
 
@@ -312,17 +373,17 @@ buildMakeActions outputDir filePathMap foreigns usePrefix =
   requiresForeign = not . null . CF.moduleForeign
 
   getTimestamp :: FilePath -> Make (Maybe UTCTime)
-  getTimestamp path = makeIO (const (SimpleErrorWrapper $ CannotGetFileInfo path)) $ do
+  getTimestamp path = makeIO (const (ErrorMessage [] $ CannotGetFileInfo path)) $ do
     exists <- doesFileExist path
     traverse (const $ getModificationTime path) $ guard exists
 
   readTextFile :: FilePath -> Make String
-  readTextFile path = makeIO (const (SimpleErrorWrapper $ CannotReadFile path)) $ readFile path
+  readTextFile path = makeIO (const (ErrorMessage [] $ CannotReadFile path)) $ readUTF8File path
 
   writeTextFile :: FilePath -> String -> Make ()
-  writeTextFile path text = makeIO (const (SimpleErrorWrapper $ CannotWriteFile path)) $ do
+  writeTextFile path text = makeIO (const (ErrorMessage [] $ CannotWriteFile path)) $ do
     mkdirp path
-    writeFile path text
+    writeUTF8File path text
     where
     mkdirp :: FilePath -> IO ()
     mkdirp = createDirectoryIfMissing True . takeDirectory

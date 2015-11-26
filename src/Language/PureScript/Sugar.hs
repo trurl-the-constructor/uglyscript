@@ -14,21 +14,21 @@
 -----------------------------------------------------------------------------
 
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE CPP #-}
 
 module Language.PureScript.Sugar (desugar, module S) where
 
+import Prelude ()
+import Prelude.Compat
+
 import Control.Monad
 import Control.Category ((>>>))
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative
-#endif
 import Control.Monad.Error.Class (MonadError())
 import Control.Monad.Writer.Class (MonadWriter())
 import Control.Monad.Supply.Class
 
 import Language.PureScript.AST
 import Language.PureScript.Errors
+import Language.PureScript.Externs
 
 import Language.PureScript.Sugar.BindingGroups as S
 import Language.PureScript.Sugar.CaseDeclarations as S
@@ -63,15 +63,16 @@ import Language.PureScript.Sugar.TypeDeclarations as S
 --
 --  * Group mutually recursive value and data declarations into binding groups.
 --
-desugar :: (Applicative m, MonadSupply m, MonadError MultipleErrors m, MonadWriter MultipleErrors m) => [Module] -> m [Module]
-desugar = map removeSignedLiterals
-          >>> mapM desugarObjectConstructors
-          >=> mapM desugarOperatorSections
-          >=> mapM desugarDoModule
-          >=> desugarCasesModule
-          >=> desugarTypeDeclarationsModule
-          >=> desugarImports
-          >=> rebracket
-          >=> mapM deriveInstances
-          >=> desugarTypeClasses
-          >=> createBindingGroupsModule
+desugar :: (Applicative m, MonadSupply m, MonadError MultipleErrors m, MonadWriter MultipleErrors m) => [ExternsFile] -> [Module] -> m [Module]
+desugar externs =
+  map removeSignedLiterals
+    >>> traverse desugarObjectConstructors
+    >=> traverse desugarOperatorSections
+    >=> traverse desugarDoModule
+    >=> desugarCasesModule
+    >=> desugarTypeDeclarationsModule
+    >=> desugarImports externs
+    >=> rebracket externs
+    >=> traverse deriveInstances
+    >=> desugarTypeClasses externs
+    >=> createBindingGroupsModule

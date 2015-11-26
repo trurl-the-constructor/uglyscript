@@ -1,19 +1,14 @@
-{-# LANGUAGE CPP #-}
-
 module Completion where
+
+import Prelude ()
+import Prelude.Compat
 
 import Data.Maybe (mapMaybe)
 import Data.List (nub, nubBy, sortBy, isPrefixOf, stripPrefix)
 import Data.Char (isUpper)
 import Data.Function (on)
-#if __GLASGOW_HASKELL__ < 710
-import Data.Traversable (traverse)
-#endif
 
 import Control.Arrow (second)
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative ((<$>), (<*>))
-#endif
 import Control.Monad.Trans.Reader (asks, runReaderT, ReaderT)
 import Control.Monad.Trans.State.Strict
 
@@ -41,7 +36,7 @@ data CompletionContext
   | CtxIdentifier
   | CtxType
   | CtxFixed String
-  deriving (Show)
+  deriving (Show, Read)
 
 -- |
 -- Loads module, function, and file completions.
@@ -143,46 +138,42 @@ getImportedModules = asks psciImportedModules
 getModuleNames :: CompletionM [String]
 getModuleNames = moduleNames <$> getLoadedModules
 
-mapLoadedModulesAndQualify :: (Show a) => (P.Module -> [(a, P.Declaration)]) -> CompletionM [String]
-mapLoadedModulesAndQualify f = do
+mapLoadedModulesAndQualify :: (a -> String) -> (P.Module -> [(a, P.Declaration)]) -> CompletionM [String]
+mapLoadedModulesAndQualify sho f = do
   ms <- getLoadedModules
   let argPairs = do m <- ms
                     fm <- f m
                     return (m, fm)
-  concat <$> traverse (uncurry getAllQualifications) argPairs
+  concat <$> traverse (uncurry (getAllQualifications sho)) argPairs
 
 getIdentNames :: CompletionM [String]
-getIdentNames = mapLoadedModulesAndQualify identNames
+getIdentNames = mapLoadedModulesAndQualify P.showIdent identNames
 
 getDctorNames :: CompletionM [String]
-getDctorNames = mapLoadedModulesAndQualify dctorNames
+getDctorNames = mapLoadedModulesAndQualify P.runProperName dctorNames
 
 getTypeNames :: CompletionM [String]
-getTypeNames = mapLoadedModulesAndQualify typeDecls
+getTypeNames = mapLoadedModulesAndQualify P.runProperName typeDecls
 
 -- | Given a module and a declaration in that module, return all possible ways
 -- it could have been referenced given the current PSCiState - including fully
 -- qualified, qualified using an alias, and unqualified.
-getAllQualifications :: (Show a) => P.Module -> (a, P.Declaration) -> CompletionM [String]
-getAllQualifications m (declName, decl) = do
+getAllQualifications :: (a -> String) -> P.Module -> (a, P.Declaration) -> CompletionM [String]
+getAllQualifications sho m (declName, decl) = do
   imports <- getAllImportsOf m
   let fullyQualified = qualifyWith (Just (P.getModuleName m))
   let otherQuals = nub (concatMap qualificationsUsing imports)
   return $ fullyQualified : otherQuals
   where
-  qualifyWith mMod = show (P.Qualified mMod declName)
+  qualifyWith mMod = P.showQualified sho (P.Qualified mMod declName)
   referencedBy refs = P.isExported (Just refs) decl
 
   qualificationsUsing (_, importType, asQ') =
     let q = qualifyWith asQ'
     in case importType of
           P.Implicit      -> [q]
-          P.Explicit refs -> if referencedBy refs
-                               then [q]
-                               else []
-          P.Hiding refs   -> if referencedBy refs
-                               then []
-                               else [q]
+          P.Explicit refs -> [q | referencedBy refs]
+          P.Hiding refs   -> [q | not $ referencedBy refs]
 
 
 -- | Returns all the ImportedModule values referring to imports of a particular
@@ -222,7 +213,7 @@ dctorNames = nubOnFst . concatMap go . P.exportedDeclarations
   go _ = []
 
 moduleNames :: [P.Module] -> [String]
-moduleNames ms = nub [show moduleName | P.Module _ _ moduleName _ _ <- ms]
+moduleNames ms = nub [P.runModuleName moduleName | P.Module _ _ moduleName _ _ <- ms]
 
 directivesFirst :: Completion -> Completion -> Ordering
 directivesFirst (Completion _ d1 _) (Completion _ d2 _) = go d1 d2

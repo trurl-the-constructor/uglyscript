@@ -13,6 +13,9 @@
 --
 -----------------------------------------------------------------------------
 
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE CPP #-}
+
 module Language.PureScript.TypeChecker.Subsumption (
     subsumes
 ) where
@@ -20,29 +23,31 @@ module Language.PureScript.TypeChecker.Subsumption (
 import Data.List (sortBy)
 import Data.Ord (comparing)
 
-import Control.Monad
+#if __GLASGOW_HASKELL__ < 710
+import Control.Applicative
+#endif
 import Control.Monad.Error.Class (MonadError(..))
-import Control.Monad.Unify
+import Control.Monad.State.Class (MonadState(..))
 
+import Language.PureScript.Crash
 import Language.PureScript.AST
 import Language.PureScript.Errors
 import Language.PureScript.Primitives
 import Language.PureScript.TypeChecker.Monad
 import Language.PureScript.TypeChecker.Skolems
-import Language.PureScript.TypeChecker.Synonyms
 import Language.PureScript.TypeChecker.Unify
 import Language.PureScript.Types
 
--- |
--- Check whether one type subsumes another, rethrowing errors to provide a better error message
---
-subsumes :: Maybe Expr -> Type -> Type -> UnifyT Type Check (Maybe Expr)
-subsumes val ty1 ty2 = rethrow (onErrorMessages (ErrorInSubsumption ty1 ty2)) $ subsumes' val ty1 ty2
+-- | Check that one type subsumes another, rethrowing errors to provide a better error message
+subsumes :: (Functor m, Applicative m, MonadError MultipleErrors m, MonadState CheckState m) => Maybe Expr -> Type -> Type -> m (Maybe Expr)
+subsumes val ty1 ty2 = rethrow (addHint (ErrorInSubsumption ty1 ty2)) $ subsumes' val ty1 ty2
 
--- |
--- Check whether one type subsumes another
---
-subsumes' :: Maybe Expr -> Type -> Type -> UnifyT Type Check (Maybe Expr)
+-- | Check tahat one type subsumes another
+subsumes' :: (Functor m, Applicative m, MonadError MultipleErrors m, MonadState CheckState m) =>
+  Maybe Expr ->
+  Type ->
+  Type ->
+  m (Maybe Expr)
 subsumes' val (ForAll ident ty1 _) ty2 = do
   replaced <- replaceVarWithUnknown ident ty1
   subsumes val replaced ty2
@@ -50,19 +55,13 @@ subsumes' val ty1 (ForAll ident ty2 sco) =
   case sco of
     Just sco' -> do
       sko <- newSkolemConstant
-      let sk = skolemize ident sko sco' ty2
+      let sk = skolemize ident sko sco' Nothing ty2
       subsumes val ty1 sk
-    Nothing -> throwError . errorMessage $ UnspecifiedSkolemScope
+    Nothing -> internalError "subsumes: unspecified skolem scope"
 subsumes' val (TypeApp (TypeApp f1 arg1) ret1) (TypeApp (TypeApp f2 arg2) ret2) | f1 == tyFunction && f2 == tyFunction = do
   _ <- subsumes Nothing arg2 arg1
   _ <- subsumes Nothing ret1 ret2
   return val
-subsumes' val (SaturatedTypeSynonym name tyArgs) ty2 = do
-  ty1 <- introduceSkolemScope <=< expandTypeSynonym name $ tyArgs
-  subsumes val ty1 ty2
-subsumes' val ty1 (SaturatedTypeSynonym name tyArgs) = do
-  ty2 <- introduceSkolemScope <=< expandTypeSynonym name $ tyArgs
-  subsumes val ty1 ty2
 subsumes' val (KindedType ty1 _) ty2 =
   subsumes val ty1 ty2
 subsumes' val ty1 (KindedType ty2 _) =
@@ -79,18 +78,25 @@ subsumes' val (TypeApp f1 r1) (TypeApp f2 r2) | f1 == tyObject && f2 == tyObject
   go ts1' ts2' r1' r2'
   return val
   where
-  go [] ts2 r1' r2' = r1' =?= rowFromList (ts2, r2')
-  go ts1 [] r1' r2' = r2' =?= rowFromList (ts1, r1')
+  go [] ts2 r1' r2' = unifyTypes r1' (rowFromList (ts2, r2'))
+  go ts1 [] r1' r2' = unifyTypes r2' (rowFromList (ts1, r1'))
   go ((p1, ty1) : ts1) ((p2, ty2) : ts2) r1' r2'
     | p1 == p2 = do _ <- subsumes Nothing ty1 ty2
                     go ts1 ts2 r1' r2'
-    | p1 < p2 = do rest <- fresh
-                   r2' =?= RCons p1 ty1 rest
+    | p1 < p2 = do rest <- freshType
+                   -- What happens next is a bit of a hack.
+                   -- TODO: in the new type checker, object properties will probably be restricted to being monotypes
+                   -- in which case, this branch of the subsumes function should not even be necessary.
+                   case r2' of
+                     REmpty -> throwError . errorMessage $ AdditionalProperty p1
+                     _ -> unifyTypes r2' (RCons p1 ty1 rest)
                    go ts1 ((p2, ty2) : ts2) r1' rest
-    | otherwise = do rest <- fresh
-                     r1' =?= RCons p2 ty2 rest
+    | otherwise = do rest <- freshType
+                     case r1' of
+                       REmpty -> throwError . errorMessage $ PropertyIsMissing p2
+                       _ -> unifyTypes r1' (RCons p2 ty2 rest)
                      go ((p1, ty1) : ts1) ts2 rest r2'
 subsumes' val ty1 ty2@(TypeApp obj _) | obj == tyObject = subsumes val ty2 ty1
 subsumes' val ty1 ty2 = do
-  ty1 =?= ty2
+  unifyTypes ty1 ty2
   return val

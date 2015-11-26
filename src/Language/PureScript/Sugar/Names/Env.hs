@@ -12,10 +12,6 @@
 -----------------------------------------------------------------------------
 
 {-# LANGUAGE FlexibleContexts #-}
---{-# LANGUAGE ScopedTypeVariables #-}
---{-# LANGUAGE PatternGuards #-}
---{-# LANGUAGE RankNTypes #-}
---{-# LANGUAGE TupleSections #-}
 
 module Language.PureScript.Sugar.Names.Env
   ( Imports(..)
@@ -23,7 +19,7 @@ module Language.PureScript.Sugar.Names.Env
   , Exports(..)
   , nullExports
   , Env
-  , initEnv
+  , primEnv
   , envModuleSourceSpan
   , envModuleImports
   , envModuleExports
@@ -32,10 +28,10 @@ module Language.PureScript.Sugar.Names.Env
   , exportValue
   ) where
 
+import qualified Data.Map as M
+
 import Control.Monad
 import Control.Monad.Error.Class (MonadError(..))
-
-import qualified Data.Map as M
 
 import Language.PureScript.AST
 import Language.PureScript.Errors
@@ -67,7 +63,7 @@ data Imports = Imports
   -- The list of modules that have been imported into the current scope.
   --
   , importedModules :: [ModuleName]
-  } deriving (Show)
+  } deriving (Show, Read)
 
 -- |
 -- An empty 'Imports' value.
@@ -95,7 +91,7 @@ data Exports = Exports
   -- came from.
   --
   , exportedValues :: [(Ident, ModuleName)]
-  } deriving (Show)
+  } deriving (Show, Read)
 
 -- |
 -- An empty 'Exports' value.
@@ -136,11 +132,9 @@ primExports = Exports (mkTypeEntry `map` M.keys primTypes) [] (map (\(a,b) -> (b
   where
   mkTypeEntry (Qualified _ name) = ((name, []), ModuleName [ProperName "Prim"])
 
--- |
--- The initial global import/export environment containing the @Prim@ module.
---
-initEnv :: Env
-initEnv = M.singleton
+-- | Environment which only contains the Prim module.
+primEnv :: Env
+primEnv = M.singleton
   (ModuleName [ProperName "Prim"])
   (internalModuleSourceSpan "<Prim>", nullImports, primExports)
 
@@ -184,7 +178,7 @@ exportValue exps name mn = do
 -- Adds an entry to a list of exports unless it is already present, in which case an error is
 -- returned.
 --
-addExport :: (MonadError MultipleErrors m, Eq a, Show a) => (a -> SimpleErrorMessage) -> a -> ModuleName -> [(a, ModuleName)] -> m [(a, ModuleName)]
+addExport :: (MonadError MultipleErrors m, Eq a) => (a -> SimpleErrorMessage) -> a -> ModuleName -> [(a, ModuleName)] -> m [(a, ModuleName)]
 addExport what name mn exports =
   if any ((== name) . fst) exports
   then throwConflictError what name
@@ -193,5 +187,5 @@ addExport what name mn exports =
 -- |
 -- Raises an error for when there is more than one definition for something.
 --
-throwConflictError :: (MonadError MultipleErrors m, Show a) => (a -> SimpleErrorMessage) -> a -> m b
+throwConflictError :: (MonadError MultipleErrors m) => (a -> SimpleErrorMessage) -> a -> m b
 throwConflictError conflict = throwError . errorMessage . conflict

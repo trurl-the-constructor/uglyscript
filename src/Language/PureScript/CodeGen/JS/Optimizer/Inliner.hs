@@ -13,8 +13,6 @@
 --
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE CPP #-}
-
 module Language.PureScript.CodeGen.JS.Optimizer.Inliner (
   inlineVariables,
   inlineValues,
@@ -26,9 +24,9 @@ module Language.PureScript.CodeGen.JS.Optimizer.Inliner (
   evaluateIifes
 ) where
 
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative (Applicative)
-#endif
+import Prelude ()
+import Prelude.Compat
+
 import Control.Monad.Supply.Class (MonadSupply, freshName)
 import Data.Maybe (fromMaybe)
 
@@ -255,7 +253,7 @@ inlineFnComposition = everywhereOnJSTopDownM convert
     return $ JSFunction Nothing [arg] (JSBlock [JSReturn $ JSApp x [JSApp y [JSVar arg]]])
   convert other = return other
   isFnCompose :: JS -> JS -> Bool
-  isFnCompose dict' fn = isDict semigroupoidFn dict' && (isPreludeFn (C.<<<) fn || isPreludeFn (C.compose) fn)
+  isFnCompose dict' fn = isDict semigroupoidFn dict' && (isPreludeFn (C.<<<) fn || isPreludeFn C.compose fn)
 
 isDict :: (String, String) -> JS -> Bool
 isDict (moduleName, dictName) (JSAccessor x (JSVar y)) = x == dictName && y == moduleName

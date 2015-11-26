@@ -14,9 +14,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE CPP #-}
 
 -- Failing tests can specify the kind of error that should be thrown with a
 -- @shouldFailWith declaration. For example:
@@ -35,6 +33,9 @@
 
 module Main (main) where
 
+import Prelude ()
+import Prelude.Compat
+
 import qualified Language.PureScript as P
 import qualified Language.PureScript.CodeGen.JS as J
 import qualified Language.PureScript.CoreFn as CF
@@ -42,18 +43,12 @@ import qualified Language.PureScript.CoreFn as CF
 import Data.Char (isSpace)
 import Data.Maybe (mapMaybe, fromMaybe)
 import Data.List (isSuffixOf, sort, stripPrefix)
-#if __GLASGOW_HASKELL__ < 710
-import Data.Traversable (traverse)
-#endif
 import Data.Time.Clock (UTCTime())
 
 import qualified Data.Map as M
 
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative
-#endif
 import Control.Arrow ((>>>))
 
 import Control.Monad.Reader
@@ -66,6 +61,7 @@ import System.Exit
 import System.Process
 import System.FilePath
 import System.Directory
+import System.IO.UTF8
 import qualified System.Info
 import qualified System.FilePath.Glob as Glob
 
@@ -77,7 +73,7 @@ modulesDir :: FilePath
 modulesDir = ".test_modules" </> "node_modules"
 
 makeActions :: M.Map P.ModuleName FilePath -> P.MakeActions P.Make
-makeActions foreigns = (P.buildMakeActions modulesDir (error "makeActions: input file map was read.") foreigns False)
+makeActions foreigns = (P.buildMakeActions modulesDir (P.internalError "makeActions: input file map was read.") foreigns False)
                          { P.getInputTimestamp = getInputTimestamp
                          , P.getOutputTimestamp = getOutputTimestamp
                          }
@@ -93,17 +89,17 @@ makeActions foreigns = (P.buildMakeActions modulesDir (error "makeActions: input
   getOutputTimestamp mn = do
     let filePath = modulesDir </> P.runModuleName mn
     exists <- liftIO $ doesDirectoryExist filePath
-    return (if exists then Just (error "getOutputTimestamp: read timestamp") else Nothing)
+    return (if exists then Just (P.internalError "getOutputTimestamp: read timestamp") else Nothing)
 
 readInput :: [FilePath] -> IO [(FilePath, String)]
 readInput inputFiles = forM inputFiles $ \inputFile -> do
-  text <- readFile inputFile
+  text <- readUTF8File inputFile
   return (inputFile, text)
 
 type TestM = WriterT [(FilePath, String)] IO
 
 runTest :: P.Make a -> IO (Either P.MultipleErrors a)
-runTest = fmap (fmap fst) . P.runMake P.defaultOptions
+runTest = fmap fst . P.runMake P.defaultOptions
 
 compile :: [FilePath] -> M.Map P.ModuleName FilePath -> IO (Either P.MultipleErrors P.Environment)
 compile inputFiles foreigns = runTest $ do
@@ -157,7 +153,7 @@ assertDoesNotCompile inputFiles foreigns = do
 
   where
   getShouldFailWith =
-    readFile
+    readUTF8File
     >>> liftIO
     >>> fmap (   lines
              >>> mapMaybe (stripPrefix "-- @shouldFailWith ")
@@ -184,7 +180,7 @@ main = do
   supportPurs <- supportFiles "purs"
   supportJS   <- supportFiles "js"
 
-  foreignFiles <- forM supportJS (\f -> (f,) <$> readFile f)
+  foreignFiles <- forM supportJS (\f -> (f,) <$> readUTF8File f)
   Right (foreigns, _) <- runExceptT $ runWriterT $ P.parseForeignModulesFromFiles foreignFiles
 
   let passing = cwd </> "examples" </> "passing"

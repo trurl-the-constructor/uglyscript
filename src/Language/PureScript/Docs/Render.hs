@@ -10,6 +10,7 @@
 
 module Language.PureScript.Docs.Render where
 
+import Data.Maybe (maybeToList)
 import Data.Monoid ((<>))
 import qualified Language.PureScript as P
 
@@ -29,7 +30,7 @@ renderDeclarationWithOptions opts Declaration{..} =
       , renderType' ty
       ]
     DataDeclaration dtype args ->
-      [ keyword (show dtype)
+      [ keyword (P.showDataDeclType dtype)
       , renderType' (typeApp declTitle args)
       ]
     ExternDataDeclaration kind' ->
@@ -46,11 +47,9 @@ renderDeclarationWithOptions opts Declaration{..} =
       ]
     TypeClassDeclaration args implies ->
       [ keywordClass ]
-      ++ maybe [] (:[]) superclasses
+      ++ maybeToList superclasses
       ++ [renderType' (typeApp declTitle args)]
-      ++ if any (isTypeClassMember . cdeclInfo) declChildren
-            then [keywordWhere]
-            else []
+      ++ [keywordWhere | any (isTypeClassMember . cdeclInfo) declChildren]
 
       where
       superclasses
@@ -72,11 +71,7 @@ renderChildDeclarationWithOptions :: RenderTypeOptions -> ChildDeclaration -> Re
 renderChildDeclarationWithOptions opts ChildDeclaration{..} =
   mintersperse sp $ case cdeclInfo of
     ChildInstance constraints ty ->
-      [ keywordInstance
-      , ident cdeclTitle
-      , syntax "::"
-      ] ++ maybe [] (:[]) (renderConstraints constraints)
-        ++ [ renderType' ty ]
+      maybeToList (renderConstraints constraints) ++ [ renderType' ty ]
     ChildDataConstructor args ->
       [ renderType' typeApp' ]
       where

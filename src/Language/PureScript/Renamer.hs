@@ -16,13 +16,12 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE CPP #-}
 
 module Language.PureScript.Renamer (renameInModules) where
 
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative
-#endif
+import Prelude ()
+import Prelude.Compat
+
 import Control.Monad.State
 
 import Data.List (find)
@@ -80,12 +79,12 @@ updateScope :: Ident -> Rename Ident
 updateScope i@(Ident name) | name == C.__unused = return i
 updateScope name = do
   scope <- get
-  name' <- case name `S.member` rsUsedNames scope of
-             True -> do
+  name' <- if name `S.member` rsUsedNames scope
+             then do
                let newNames = [ Ident (runIdent name ++ "_" ++ show (i :: Int)) | i <- [1..] ]
                    Just newName = find (`S.notMember` rsUsedNames scope) newNames
                return newName
-             False -> return name
+             else return name
   modify $ \s -> s { rsBoundNames = M.insert name name' (rsBoundNames s)
                    , rsUsedNames  = S.insert name' (rsUsedNames s)
                    }
@@ -100,7 +99,7 @@ lookupIdent name = do
   name' <- gets $ M.lookup name . rsBoundNames
   case name' of
     Just name'' -> return name''
-    Nothing -> error $ "Rename scope is missing ident '" ++ show name ++ "'"
+    Nothing -> error $ "Rename scope is missing ident '" ++ showIdent name ++ "'"
 
 -- |
 -- Finds idents introduced by declarations.
@@ -119,7 +118,7 @@ renameInModules = map go
   where
   go :: Module Ann -> Module Ann
   go m@(Module _ _ _ _ _ decls) = m { moduleDecls = map (renameInDecl' (findDeclIdents decls)) decls }
-  
+
   renameInDecl' :: [Ident] -> Bind Ann -> Bind Ann
   renameInDecl' scope = runRename scope . renameInDecl True
 
@@ -135,8 +134,8 @@ renameInDecl isTopLevel (NonRec name val) = do
   name' <- if isTopLevel then return name else updateScope name
   NonRec name' <$> renameInValue val
 renameInDecl isTopLevel (Rec ds) = do
-  ds' <- mapM updateNames ds
-  Rec <$> mapM updateValues ds'
+  ds' <- traverse updateNames ds
+  Rec <$> traverse updateValues ds'
   where
   updateNames :: (Ident, Expr Ann) -> Rename (Ident, Expr Ann)
   updateNames (name, val) = do
@@ -155,7 +154,7 @@ renameInValue c@(Constructor{}) = return c
 renameInValue (Accessor ann prop v) =
   Accessor ann prop <$> renameInValue v
 renameInValue (ObjectUpdate ann obj vs) =
-  ObjectUpdate ann <$> renameInValue obj <*> mapM (\(name, v) -> (,) name <$> renameInValue v) vs
+  ObjectUpdate ann <$> renameInValue obj <*> traverse (\(name, v) -> (,) name <$> renameInValue v) vs
 renameInValue e@(Abs (_, _, _, Just IsTypeClassConstructor) _ _) = return e
 renameInValue (Abs ann name v) =
   newScope $ Abs ann <$> updateScope name <*> renameInValue v
@@ -165,16 +164,16 @@ renameInValue (Var ann (Qualified Nothing name)) =
   Var ann . Qualified Nothing <$> lookupIdent name
 renameInValue v@(Var{}) = return v
 renameInValue (Case ann vs alts) =
-  newScope $ Case ann <$> mapM renameInValue vs <*> mapM renameInCaseAlternative alts
+  newScope $ Case ann <$> traverse renameInValue vs <*> traverse renameInCaseAlternative alts
 renameInValue (Let ann ds v) =
-  newScope $ Let ann <$> mapM (renameInDecl False) ds <*> renameInValue v
+  newScope $ Let ann <$> traverse (renameInDecl False) ds <*> renameInValue v
 
 -- |
 -- Renames within literals.
 --
 renameInLiteral :: (a -> Rename a) -> Literal a -> Rename (Literal a)
-renameInLiteral rename (ArrayLiteral bs) = ArrayLiteral <$> mapM rename bs
-renameInLiteral rename (ObjectLiteral bs) = ObjectLiteral <$> mapM (sndM rename) bs
+renameInLiteral rename (ArrayLiteral bs) = ArrayLiteral <$> traverse rename bs
+renameInLiteral rename (ObjectLiteral bs) = ObjectLiteral <$> traverse (sndM rename) bs
 renameInLiteral _ l = return l
 
 -- |
@@ -182,8 +181,8 @@ renameInLiteral _ l = return l
 --
 renameInCaseAlternative :: CaseAlternative Ann -> Rename (CaseAlternative Ann)
 renameInCaseAlternative (CaseAlternative bs v) = newScope $
-  CaseAlternative <$> mapM renameInBinder bs
-                  <*> eitherM (mapM (pairM renameInValue renameInValue)) renameInValue v
+  CaseAlternative <$> traverse renameInBinder bs
+                  <*> eitherM (traverse (pairM renameInValue renameInValue)) renameInValue v
 
 -- |
 -- Renames within binders.
@@ -195,6 +194,6 @@ renameInBinder (LiteralBinder ann b) =
 renameInBinder (VarBinder ann name) =
   VarBinder ann <$> updateScope name
 renameInBinder (ConstructorBinder ann tctor dctor bs) =
-  ConstructorBinder ann tctor dctor <$> mapM renameInBinder bs
+  ConstructorBinder ann tctor dctor <$> traverse renameInBinder bs
 renameInBinder (NamedBinder ann name b) =
   NamedBinder ann <$> updateScope name <*> renameInBinder b

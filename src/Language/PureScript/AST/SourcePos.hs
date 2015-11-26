@@ -19,8 +19,11 @@
 
 module Language.PureScript.AST.SourcePos where
 
+import Prelude ()
+import Prelude.Compat
+
 import qualified Data.Data as D
-import Data.Aeson ((.=))
+import Data.Aeson ((.=), (.:))
 import qualified Data.Aeson as A
 
 -- |
@@ -35,7 +38,7 @@ data SourcePos = SourcePos
     -- Column number
     --
   , sourcePosColumn :: Int
-  } deriving (Eq, Ord, Show, D.Data, D.Typeable)
+  } deriving (Show, Read, Eq, Ord, D.Data, D.Typeable)
 
 displaySourcePos :: SourcePos -> String
 displaySourcePos sp =
@@ -45,6 +48,11 @@ displaySourcePos sp =
 instance A.ToJSON SourcePos where
   toJSON SourcePos{..} =
     A.toJSON [sourcePosLine, sourcePosColumn]
+
+instance A.FromJSON SourcePos where
+  parseJSON arr = do
+    [line, col] <- A.parseJSON arr
+    return $ SourcePos line col
 
 data SourceSpan = SourceSpan
   { -- |
@@ -58,7 +66,7 @@ data SourceSpan = SourceSpan
     -- End of the span
     --
   , spanEnd :: SourcePos
-  } deriving (Eq, Ord, Show, D.Data, D.Typeable)
+  } deriving (Show, Read, Eq, Ord, D.Data, D.Typeable)
 
 displayStartEndPos :: SourceSpan -> String
 displayStartEndPos sp =
@@ -76,6 +84,13 @@ instance A.ToJSON SourceSpan where
              , "start" .= spanStart
              , "end"   .= spanEnd
              ]
+
+instance A.FromJSON SourceSpan where
+  parseJSON = A.withObject "SourceSpan" $ \o ->
+    SourceSpan     <$>
+      o .: "name"  <*>
+      o .: "start" <*>
+      o .: "end"
 
 internalModuleSourceSpan :: String -> SourceSpan
 internalModuleSourceSpan name = SourceSpan name (SourcePos 0 0) (SourcePos 0 0)

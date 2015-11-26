@@ -21,6 +21,8 @@ import qualified Data.Data as D
 import Data.Aeson ((.=))
 import qualified Data.Aeson as A
 
+import Language.PureScript.Crash
+
 -- |
 -- A precedence level for an infix operator
 --
@@ -29,20 +31,29 @@ type Precedence = Integer
 -- |
 -- Associativity for infix operators
 --
-data Associativity = Infixl | Infixr | Infix deriving (Eq, Ord, D.Data, D.Typeable)
+data Associativity = Infixl | Infixr | Infix deriving (Show, Read, Eq, Ord, D.Data, D.Typeable)
 
-instance Show Associativity where
-  show Infixl = "infixl"
-  show Infixr = "infixr"
-  show Infix  = "infix"
+showAssoc :: Associativity -> String
+showAssoc Infixl = "infixl"
+showAssoc Infixr = "infixr"
+showAssoc Infix  = "infix"
+
+readAssoc :: String -> Associativity
+readAssoc "infixl" = Infixl
+readAssoc "infixr" = Infixr
+readAssoc "infix"  = Infix
+readAssoc _ = internalError "readAssoc: no parse"
 
 instance A.ToJSON Associativity where
-  toJSON = A.toJSON . show
+  toJSON = A.toJSON . showAssoc
+
+instance A.FromJSON Associativity where
+  parseJSON = fmap readAssoc . A.parseJSON
 
 -- |
 -- Fixity data for infix operators
 --
-data Fixity = Fixity Associativity Precedence deriving (Show, Eq, Ord, D.Data, D.Typeable)
+data Fixity = Fixity Associativity Precedence deriving (Show, Read, Eq, Ord, D.Data, D.Typeable)
 
 instance A.ToJSON Fixity where
   toJSON (Fixity associativity precedence) =

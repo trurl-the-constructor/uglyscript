@@ -14,15 +14,18 @@
 
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Language.PureScript.Environment where
 
 import Data.Data
 import Data.Maybe (fromMaybe)
+import Data.Aeson.TH
 import qualified Data.Map as M
 import qualified Data.Text as T
 import qualified Data.Aeson as A
 
+import Language.PureScript.Crash
 import Language.PureScript.Kinds
 import Language.PureScript.Names
 import Language.PureScript.TypeClassDictionaries
@@ -41,8 +44,8 @@ data Environment = Environment {
   --
   , types :: M.Map (Qualified ProperName) (Kind, TypeKind)
   -- |
-  -- Data constructors currently in scope, along with their associated data type constructors
-  --
+  -- Data constructors currently in scope, along with their associated type
+  -- constructor name, argument types and return type.
   , dataConstructors :: M.Map (Qualified ProperName) (DataDeclType, ProperName, Type, [Ident])
   -- |
   -- Type synonyms currently in scope
@@ -56,7 +59,7 @@ data Environment = Environment {
   -- Type classes
   --
   , typeClasses :: M.Map (Qualified ProperName) ([(String, Maybe Kind)], [(Ident, Type)], [Constraint])
-  } deriving (Show)
+  } deriving (Show, Read)
 
 
 -- |
@@ -70,7 +73,7 @@ data NameVisibility
   -- |
   -- The name is defined in the another binding group, or has been made visible by a function binder
   --
-  | Defined deriving (Show, Eq)
+  | Defined deriving (Show, Read, Eq)
 
 -- |
 -- A flag for whether a name is for an private or public value - only public values will be
@@ -93,7 +96,7 @@ data NameKind
   -- |
   -- A name for a variable
   --
-  | Variable deriving (Show, Eq, Data, Typeable)
+  | Variable deriving (Show, Eq, Data, Read, Typeable)
 
 -- |
 -- The kinds of a type
@@ -119,7 +122,7 @@ data TypeKind
   -- A scoped type variable
   --
   | ScopedTypeVar
-   deriving (Show, Eq, Data, Typeable)
+   deriving (Show, Read, Eq, Data, Typeable)
 
 -- |
 -- The type ('data' or 'newtype') of a data type declaration
@@ -132,14 +135,14 @@ data DataDeclType
   -- |
   -- A newtype constructor
   --
-  | Newtype deriving (Eq, Ord, Data, Typeable)
+  | Newtype deriving (Show, Read, Eq, Ord, Data, Typeable)
 
-instance Show DataDeclType where
-  show Data = "data"
-  show Newtype = "newtype"
+showDataDeclType :: DataDeclType -> String
+showDataDeclType Data = "data"
+showDataDeclType Newtype = "newtype"
 
 instance A.ToJSON DataDeclType where
-  toJSON = A.toJSON . show
+  toJSON = A.toJSON . showDataDeclType
 
 instance A.FromJSON DataDeclType where
   parseJSON = A.withText "DataDeclType" $ \str ->
@@ -155,7 +158,7 @@ instance A.FromJSON DataDeclType where
 --
 lookupConstructor :: Environment -> Qualified ProperName -> (DataDeclType, ProperName, Type, [Ident])
 lookupConstructor env ctor =
-  fromMaybe (error "Data constructor not found") $ ctor `M.lookup` dataConstructors env
+  fromMaybe (internalError "Data constructor not found") $ ctor `M.lookup` dataConstructors env
 
 -- |
 -- Checks whether a data constructor is for a newtype.
@@ -171,3 +174,5 @@ isNewtypeConstructor e ctor = case lookupConstructor e ctor of
 lookupValue :: Environment -> Qualified Ident -> Maybe (Type, NameKind, NameVisibility)
 lookupValue env (Qualified (Just mn) ident) = (mn, ident) `M.lookup` names env
 lookupValue _ _ = Nothing
+
+$(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''TypeKind)

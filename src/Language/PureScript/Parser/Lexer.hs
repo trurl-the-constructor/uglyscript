@@ -117,7 +117,7 @@ data Token
   | CharLiteral Char
   | StringLiteral String
   | Number (Either Integer Double)
-  deriving (Show, Eq, Ord)
+  deriving (Show, Read, Eq, Ord)
 
 prettyPrintToken :: Token -> String
 prettyPrintToken LParen            = "("
@@ -156,11 +156,12 @@ data PositionedToken = PositionedToken
   , ptComments  :: [Comment]
   } deriving (Eq)
 
+-- Parsec requires this instance for various token-level combinators
 instance Show PositionedToken where
-  show = show . ptToken
+  show = prettyPrintToken . ptToken
 
 lex :: FilePath -> String -> Either P.ParseError [PositionedToken]
-lex filePath input = P.parse parseTokens filePath input
+lex = P.parse parseTokens
 
 parseTokens :: P.Parsec String u [PositionedToken]
 parseTokens = whitespace *> P.many parsePositionedToken <* P.skipMany parseComment <* P.eof
@@ -255,7 +256,7 @@ parseToken = P.choice
     where
     -- lookAhead doesn't consume any input if its parser succeeds
     -- if notFollowedBy fails though, the consumed '0' will break the choice chain
-    consumeLeadingZero = P.lookAhead (P.char '0' >> 
+    consumeLeadingZero = P.lookAhead (P.char '0' >>
       (P.notFollowedBy P.digit P.<?> "no leading zero in number literal"))
 
 -- |
@@ -485,7 +486,7 @@ identifier = token go P.<?> "identifier"
   go _ = Nothing
 
 validModuleName :: String -> Bool
-validModuleName s = not ('_' `elem` s)
+validModuleName s = '_' `notElem` s
 
 -- |
 -- A list of purescript reserved identifiers
@@ -525,4 +526,3 @@ reservedTypeNames = [ "forall", "where" ]
 --
 opChars :: [Char]
 opChars = ":!#$%&*+./<=>?@\\^|-~"
-

@@ -20,7 +20,7 @@
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Language.PureScript.Sugar.Operators (
   rebracket,
@@ -28,13 +28,15 @@ module Language.PureScript.Sugar.Operators (
   desugarOperatorSections
 ) where
 
+import Prelude ()
+import Prelude.Compat
+
+import Language.PureScript.Crash
 import Language.PureScript.AST
 import Language.PureScript.Errors
 import Language.PureScript.Names
+import Language.PureScript.Externs
 
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative
-#endif
 import Control.Monad.State
 import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.Supply.Class
@@ -52,19 +54,19 @@ import qualified Language.PureScript.Constants as C
 -- |
 -- Remove explicit parentheses and reorder binary operator applications
 --
-rebracket :: (Applicative m, MonadError MultipleErrors m) => [Module] -> m [Module]
-rebracket ms = do
-  let fixities = concatMap collectFixities ms
+rebracket :: (Applicative m, MonadError MultipleErrors m) => [ExternsFile] -> [Module] -> m [Module]
+rebracket externs ms = do
+  let fixities = concatMap externsFixities externs ++ concatMap collectFixities ms
   ensureNoDuplicates $ map (\(i, pos, _) -> (i, pos)) fixities
   let opTable = customOperatorTable $ map (\(i, _, f) -> (i, f)) fixities
-  mapM (rebracketModule opTable) ms
+  traverse (rebracketModule opTable) ms
 
 removeSignedLiterals :: Module -> Module
 removeSignedLiterals (Module ss coms mn ds exts) = Module ss coms mn (map f' ds) exts
   where
   (f', _, _) = everywhereOnValues id go id
 
-  go (UnaryMinus val) = App (Var (Qualified (Just (ModuleName [ProperName C.prelude])) (Ident C.negate))) val
+  go (UnaryMinus val) = App (Var (Qualified Nothing (Ident C.negate))) val
   go other = other
 
 rebracketModule :: (Applicative m, MonadError MultipleErrors m) => [[(Qualified Ident, Expr -> Expr -> Expr, Associativity)]] -> Module -> m Module
@@ -80,12 +82,18 @@ removeParens =
   go (Parens val) = val
   go val = val
 
+externsFixities :: ExternsFile -> [(Qualified Ident, SourceSpan, Fixity)]
+externsFixities ExternsFile{..} =
+  [ (Qualified (Just efModuleName) (Op op), internalModuleSourceSpan "", Fixity assoc prec)
+  | ExternsFixity assoc prec op <- efFixities
+  ]
+
 collectFixities :: Module -> [(Qualified Ident, SourceSpan, Fixity)]
 collectFixities (Module _ _ moduleName ds _) = concatMap collect ds
   where
   collect :: Declaration -> [(Qualified Ident, SourceSpan, Fixity)]
   collect (PositionedDeclaration pos _ (FixityDeclaration fixity name)) = [(Qualified (Just moduleName) (Op name), pos, fixity)]
-  collect FixityDeclaration{} = error "Fixity without srcpos info"
+  collect FixityDeclaration{} = internalError "Fixity without srcpos info"
   collect _ = []
 
 ensureNoDuplicates :: (MonadError MultipleErrors m) => [(Qualified Ident, SourceSpan)] -> m ()
@@ -94,7 +102,7 @@ ensureNoDuplicates m = go $ sortBy (compare `on` fst) m
   go [] = return ()
   go [_] = return ()
   go ((x@(Qualified (Just mn) name), _) : (y, pos) : _) | x == y =
-    rethrow (onErrorMessages (ErrorInModule mn)) $
+    rethrow (addHint (ErrorInModule mn)) $
       rethrowWithPosition pos $
         throwError . errorMessage $ MultipleFixities name
   go (_ : rest) = go rest
@@ -121,7 +129,7 @@ matchOperators ops = parseChains
   extendChain (BinaryNoParens op l r) = Left l : Right op : extendChain r
   extendChain other = [Left other]
   bracketChain :: Chain -> m Expr
-  bracketChain = either (const . throwError . errorMessage $ CannotReorderOperators) return . P.parse (P.buildExpressionParser opTable parseValue <* P.eof) "operator expression"
+  bracketChain = either (\_ -> internalError "matchOperators: cannot reorder operators") return . P.parse (P.buildExpressionParser opTable parseValue <* P.eof) "operator expression"
   opTable = [P.Infix (P.try (parseTicks >>= \op -> return (\t1 t2 -> App (App op t1) t2))) P.AssocLeft]
             : map (map (\(name, f, a) -> P.Infix (P.try (matchOp name) >> return f) (toAssoc a))) ops
             ++ [[ P.Infix (P.try (parseOp >>= \ident -> return (\t1 t2 -> App (App (Var ident) t1) t2))) P.AssocLeft ]]
@@ -131,8 +139,8 @@ toAssoc Infixl = P.AssocLeft
 toAssoc Infixr = P.AssocRight
 toAssoc Infix  = P.AssocNone
 
-token :: (P.Stream s Identity t, Show t) => (t -> Maybe a) -> P.Parsec s u a
-token = P.token show (const (P.initialPos ""))
+token :: (P.Stream s Identity t) => (t -> Maybe a) -> P.Parsec s u a
+token = P.token (const "") (const (P.initialPos ""))
 
 parseValue :: P.Parsec Chain () Expr
 parseValue = token (either Just (const Nothing)) P.<?> "expression"
@@ -155,7 +163,7 @@ matchOp op = do
   guard $ ident == op
 
 desugarOperatorSections :: forall m. (Applicative m, MonadSupply m, MonadError MultipleErrors m) => Module -> m Module
-desugarOperatorSections (Module ss coms mn ds exts) = Module ss coms mn <$> mapM goDecl ds <*> pure exts
+desugarOperatorSections (Module ss coms mn ds exts) = Module ss coms mn <$> traverse goDecl ds <*> pure exts
   where
 
   goDecl :: Declaration -> m Declaration

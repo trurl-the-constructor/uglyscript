@@ -16,12 +16,15 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE CPP #-}
 
 module Language.PureScript.Sugar.DoNotation (
     desugarDoModule
 ) where
 
+import Prelude ()
+import Prelude.Compat
+
+import Language.PureScript.Crash
 import Language.PureScript.Names
 import Language.PureScript.AST
 import Language.PureScript.Environment (NameKind(..))
@@ -29,9 +32,6 @@ import Language.PureScript.Errors
 
 import qualified Language.PureScript.Constants as C
 
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative
-#endif
 import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.Supply.Class
 
@@ -43,19 +43,18 @@ desugarDoModule :: forall m. (Applicative m, MonadSupply m, MonadError MultipleE
 desugarDoModule (Module ss coms mn ds exts) = Module ss coms mn <$> parU ds desugarDo <*> pure exts
 
 desugarDo :: forall m. (Applicative m, MonadSupply m, MonadError MultipleErrors m) => Declaration -> m Declaration
-desugarDo (PositionedDeclaration pos com d) = PositionedDeclaration pos com <$> (rethrowWithPosition pos $ desugarDo d)
+desugarDo (PositionedDeclaration pos com d) = PositionedDeclaration pos com <$> rethrowWithPosition pos (desugarDo d)
 desugarDo d =
   let (f, _, _) = everywhereOnValuesM return replace return
   in f d
   where
-
   replace :: Expr -> m Expr
   replace (Do els) = go els
   replace (PositionedValue pos com v) = PositionedValue pos com <$> rethrowWithPosition pos (replace v)
   replace other = return other
 
   go :: [DoNotationElement] -> m Expr
-  go [] = error "The impossible happened in desugarDo"
+  go [] = internalError "The impossible happened in desugarDo"
   go [DoNotationValue val] = return val
   go (DoNotationValue val : rest) = do
     rest' <- go rest

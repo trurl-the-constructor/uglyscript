@@ -10,23 +10,20 @@
 -- |
 --
 -----------------------------------------------------------------------------
-
-{-# LANGUAGE CPP #-}
-
 module TestsSetup where
 
+import Prelude ()
+import Prelude.Compat
+
 import Data.Maybe (fromMaybe)
-
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative
-#endif
 import Control.Monad
-
 import Control.Monad.Trans.Maybe
 
 import System.Process
 import System.Directory
 import System.Info
+
+import Language.PureScript.Crash
 
 findNodeProcess :: IO (Maybe String)
 findNodeProcess = runMaybeT . msum $ map (MaybeT . findExecutable) names
@@ -35,7 +32,7 @@ findNodeProcess = runMaybeT . msum $ map (MaybeT . findExecutable) names
 
 fetchSupportCode :: IO ()
 fetchSupportCode = do
-  node <- fromMaybe (error "cannot find node executable") <$> findNodeProcess
+  node <- fromMaybe (internalError "cannot find node executable") <$> findNodeProcess
   setCurrentDirectory "tests/support"
   if System.Info.os == "mingw32"
     then callProcess "setup-win.cmd" []

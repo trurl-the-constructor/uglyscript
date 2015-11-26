@@ -46,8 +46,8 @@ clonePackage = do
       readProcess "git" ["tag", "v999.0.0"] "" >>= putStr
 
 bowerInstall :: IO ()
-bowerInstall = do
-  pushd packageDir $ do
+bowerInstall =
+  pushd packageDir $
     readProcess "bower" ["install"] "" >>= putStr
 
 getPackage :: IO UploadedPackage
@@ -60,7 +60,7 @@ data TestResult
   = ParseFailed String
   | Mismatch ByteString ByteString -- ^ encoding before, encoding after
   | Pass ByteString
-  deriving (Show)
+  deriving (Show, Read)
 
 -- | Test JSON encoding/decoding; parse the package, roundtrip to/from JSON,
 -- and check we get the same string.

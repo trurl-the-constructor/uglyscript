@@ -13,20 +13,15 @@
 --
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE CPP #-}
-
 module Parser
   ( parseCommand
   ) where
 
-import Prelude hiding (lex)
+import Prelude ()
+import Prelude.Compat hiding (lex)
 
 import Data.Char (isSpace)
 import Data.List (intercalate)
-
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative hiding (many)
-#endif
 
 import Text.Parsec hiding ((<|>))
 
@@ -111,7 +106,9 @@ psciLet = Decls <$> (P.reserved "let" *> P.indented *> manyDecls)
 -- | Imports must be handled separately from other declarations, so that
 -- :show import works, for example.
 psciImport :: P.TokenParser Command
-psciImport = Import <$> P.parseImportDeclaration'
+psciImport = do
+  (mn, declType, asQ, _) <- P.parseImportDeclaration'
+  return $ Import (mn, declType, asQ)
 
 -- | Any other declaration that we don't need a 'special case' parser for
 -- (like let or import declarations).
@@ -131,7 +128,6 @@ acceptable P.DataDeclaration{} = True
 acceptable P.TypeSynonymDeclaration{} = True
 acceptable P.ExternDeclaration{} = True
 acceptable P.ExternDataDeclaration{} = True
-acceptable P.ExternInstanceDeclaration{} = True
 acceptable P.TypeClassDeclaration{} = True
 acceptable P.TypeInstanceDeclaration{} = True
 acceptable _ = False

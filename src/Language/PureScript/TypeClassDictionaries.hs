@@ -36,22 +36,7 @@ data TypeClassDictionaryInScope
     , tcdInstanceTypes :: [Type]
     -- | Type class dependencies which must be satisfied to construct this dictionary
     , tcdDependencies :: Maybe [Constraint]
-    -- | The type of this dictionary
-    , tcdType :: TypeClassDictionaryType
-    } deriving (Show, Data, Typeable)
-
--- |
--- The type of a type class dictionary
---
-data TypeClassDictionaryType
-  -- |
-  -- A regular type class dictionary
-  --
-  = TCDRegular
-  -- |
-  -- A type class dictionary which is an alias for an imported dictionary from another module
-  --
-  | TCDAlias (Qualified Ident) deriving (Show, Eq, Data, Typeable)
+    } deriving (Show, Read, Data, Typeable)
 
 -- |
 -- A simplified representation of expressions which are used to represent type
@@ -74,11 +59,4 @@ data DictionaryValue
   -- A subclass dictionary
   --
   | SubclassDictionaryValue DictionaryValue (Qualified ProperName) Integer
-  deriving (Show, Ord, Eq)
-
--- |
--- Find the original dictionary which a type class dictionary in scope refers to
---
-canonicalizeDictionary :: TypeClassDictionaryInScope -> Qualified Ident
-canonicalizeDictionary (TypeClassDictionaryInScope { tcdType = TCDRegular, tcdName = nm }) = nm
-canonicalizeDictionary (TypeClassDictionaryInScope { tcdType = TCDAlias nm }) = nm
+  deriving (Show, Read, Ord, Eq)

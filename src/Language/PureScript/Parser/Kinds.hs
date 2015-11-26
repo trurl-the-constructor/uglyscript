@@ -13,18 +13,16 @@
 --
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE CPP #-}
-
 module Language.PureScript.Parser.Kinds (
     parseKind
 ) where
 
+import Prelude ()
+import Prelude.Compat
+
 import Language.PureScript.Kinds
 import Language.PureScript.Parser.Common
 import Language.PureScript.Parser.Lexer
-#if __GLASGOW_HASKELL__ < 710
-import Control.Applicative
-#endif
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Expr as P
 
@@ -46,4 +44,4 @@ parseKind :: TokenParser Kind
 parseKind = P.buildExpressionParser operators parseTypeAtom P.<?> "kind"
   where
   operators = [ [ P.Prefix (symbol' "#" >> return Row) ]
-              , [ P.Infix ((P.try rarrow) >> return FunKind) P.AssocRight ] ]
+              , [ P.Infix (P.try rarrow >> return FunKind) P.AssocRight ] ]
