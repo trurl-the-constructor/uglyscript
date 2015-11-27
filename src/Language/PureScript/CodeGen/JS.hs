@@ -159,20 +159,20 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ = do
     jsBlock@(JSBlock{}) <- valueToJsReturn body
     return $ JSFunction Nothing (map identToJs ids) jsBlock
   valueToJs e@App{} = do
-    let (f, args) = unApp e []
-    args' <- mapM valueToJs args
+    let (f, tuples) = unApp e []
+    tuples' <- mapM (mapM valueToJs) tuples
     case f of
-      Var (_, _, _, Just IsNewtype) _ -> return (head args')
-      Var (_, _, _, Just (IsConstructor _ fields)) name | length args == length fields ->
-        return $ JSUnary JSNew $ JSApp (qualifiedToJS id name) args'
+      Var (_, _, _, Just IsNewtype) _ -> undefined -- return (head tuples')
+      Var (_, _, _, Just (IsConstructor _ fields)) name | length tuples == length fields ->
+        undefined -- return $ JSUnary JSNew $ JSApp (qualifiedToJS id name) args'
       Var (_, _, _, Just IsTypeClassConstructor) name ->
-        return $ JSUnary JSNew $ JSApp (qualifiedToJS id name) args'
-      _ -> flip (foldl (\fn a -> JSApp fn [a])) args' <$> valueToJs f
+        undefined -- return $ JSUnary JSNew $ JSApp (qualifiedToJS id name) args'
+      _ -> flip (foldl (\fn args -> JSApp fn args)) tuples' <$> valueToJs f
 
     where
-    unApp :: Expr Ann -> [Expr Ann] -> (Expr Ann, [Expr Ann])
-    unApp (App _ val args) args' = unApp val (args ++ args')
-    unApp other args' = (other, args')
+    unApp :: Expr Ann -> [[Expr Ann]] -> (Expr Ann, [[Expr Ann]])
+    unApp (App _ val args) tuples = unApp val (args : tuples)
+    unApp other tuples = (other, tuples)
   valueToJs (Var (_, _, _, Just IsForeign) qi@(Qualified (Just mn') ident)) =
     return $ if mn' == mn
              then foreignIdent ident
