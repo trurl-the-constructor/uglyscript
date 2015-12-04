@@ -48,6 +48,7 @@ typeLiterals = mkPattern match
   match (Skolem name s _ _) = Just $ text $ name ++ show s
   match REmpty = Just $ text "()"
   match row@RCons{} = Just $ prettyPrintRowWith '(' ')' row
+  match (TypesTuple types) = Just $ text "(" <> punctuateH left (text ", ") (map typeAsBox types) <> text ")"
   match _ = Nothing
 
 constraintsAsBox :: [(Qualified ProperName, [Type])] -> Box -> Box
@@ -93,7 +94,7 @@ typeApp = mkPattern match
 appliedFunction :: Pattern () Type (Type, Type)
 appliedFunction = mkPattern match
   where
-  match (PrettyPrintFunction arg ret) = Just (arg, ret)
+  match (FunctionType args ret) = Just (TypesTuple args, ret)
   match _ = Nothing
 
 kinded :: Pattern () Type (Kind, Type)
@@ -105,7 +106,6 @@ kinded = mkPattern match
 insertPlaceholders :: Type -> Type
 insertPlaceholders = everywhereOnTypesTopDown convertForAlls . everywhereOnTypes convert
   where
-  convert (TypeApp (TypeApp f arg) ret) | f == tyFunction = PrettyPrintFunction arg ret
   convert (TypeApp o r) | o == tyObject = PrettyPrintObject r
   convert other = other
   convertForAlls (ForAll ident ty _) = go [ident] ty

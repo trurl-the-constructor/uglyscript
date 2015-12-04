@@ -38,7 +38,7 @@ import Control.Arrow ((&&&))
 import Language.PureScript.Crash
 import Language.PureScript.AST
 import Language.PureScript.Pretty
-import Language.PureScript.Primitives (isObject, isFunction)
+-- import Language.PureScript.Primitives (isObject, isFunction)
 import Language.PureScript.Types
 import Language.PureScript.Names
 import Language.PureScript.Kinds

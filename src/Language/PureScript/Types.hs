@@ -62,6 +62,10 @@ data Type
   --
   | TypeConstructor (Qualified ProperName)
   -- |
+  -- Function type
+  --
+  | FunctionType [Type] Type
+  -- |
   -- A type application
   --
   | TypeApp Type Type
@@ -86,6 +90,10 @@ data Type
   --
   | RCons String Type Type
   -- |
+  -- A tuple type (should be used only when parsing)
+  --
+  | TypesTuple [Type]
+  -- |
   -- A type with a kind annotation
   --
   | KindedType Type Kind
@@ -93,7 +101,7 @@ data Type
   -- |
   -- A placeholder used in pretty printing
   --
-  | PrettyPrintFunction Type Type
+  -- | PrettyPrintFunction Type Type
   -- |
   -- A placeholder used in pretty printing
   --
@@ -101,7 +109,7 @@ data Type
   -- |
   -- A placeholder used in pretty printing
   --
-  | PrettyPrintForAll [String] Type deriving (Show, Read,Eq, Ord, Data, Typeable)
+  | PrettyPrintForAll [String] Type deriving (Show, Read, Eq, Ord, Data, Typeable)
 
 -- |
 -- A typeclass constraint
@@ -154,6 +162,8 @@ replaceAllTypeVars = go []
   go :: [String] -> [(String, Type)] -> Type -> Type
   go _  m (TypeVar v) = fromMaybe (TypeVar v) (v `lookup` m)
   go bs m (TypeApp t1 t2) = TypeApp (go bs m t1) (go bs m t2)
+  go bs m (FunctionType ts t) = FunctionType (map (go bs m) ts) (go bs m t)
+  go bs m (TypesTuple ts) = TypesTuple (map (go bs m) ts)
   go bs m f@(ForAll v t sco) | v `elem` keys = go bs (filter ((/= v) . fst) m) f
                              | v `elem` usedVars =
                                let v' = genName v (keys ++ bs ++ usedVars)
@@ -192,6 +202,8 @@ freeTypeVariables = nub . go []
   go :: [String] -> Type -> [String]
   go bound (TypeVar v) | v `notElem` bound = [v]
   go bound (TypeApp t1 t2) = go bound t1 ++ go bound t2
+  go bound (FunctionType ts t) = concatMap (go bound) (t : ts)
+  go bound (TypesTuple ts) = concatMap (go bound) ts
   go bound (ForAll v t _) = go (v : bound) t
   go bound (ConstrainedType cs t) = concatMap (concatMap (go bound) . snd) cs ++ go bound t
   go bound (RCons _ t r) = go bound t ++ go bound r
@@ -238,11 +250,12 @@ everywhereOnTypes :: (Type -> Type) -> Type -> Type
 everywhereOnTypes f = go
   where
   go (TypeApp t1 t2) = f (TypeApp (go t1) (go t2))
+  go (FunctionType ts t) = f (FunctionType (map go ts) (go t))
+  go (TypesTuple ts) = f (TypesTuple (map go ts))
   go (ForAll arg ty sco) = f (ForAll arg (go ty) sco)
   go (ConstrainedType cs ty) = f (ConstrainedType (map (fmap (map go)) cs) (go ty))
   go (RCons name ty rest) = f (RCons name (go ty) (go rest))
   go (KindedType ty k) = f (KindedType (go ty) k)
-  go (PrettyPrintFunction t1 t2) = f (PrettyPrintFunction (go t1) (go t2))
   go (PrettyPrintObject t) = f (PrettyPrintObject (go t))
   go (PrettyPrintForAll args t) = f (PrettyPrintForAll args (go t))
   go other = f other
@@ -251,11 +264,12 @@ everywhereOnTypesTopDown :: (Type -> Type) -> Type -> Type
 everywhereOnTypesTopDown f = go . f
   where
   go (TypeApp t1 t2) = TypeApp (go (f t1)) (go (f t2))
+  go (FunctionType ts t) = FunctionType (map (go . f) ts) (go (f t))
+  go (TypesTuple ts) = TypesTuple (map (go . f) ts)
   go (ForAll arg ty sco) = ForAll arg (go (f ty)) sco
   go (ConstrainedType cs ty) = ConstrainedType (map (fmap (map (go . f))) cs) (go (f ty))
   go (RCons name ty rest) = RCons name (go (f ty)) (go (f rest))
   go (KindedType ty k) = KindedType (go (f ty)) k
-  go (PrettyPrintFunction t1 t2) = PrettyPrintFunction (go (f t1)) (go (f t2))
   go (PrettyPrintObject t) = PrettyPrintObject (go (f t))
   go (PrettyPrintForAll args t) = PrettyPrintForAll args (go (f t))
   go other = f other
@@ -264,11 +278,12 @@ everywhereOnTypesM :: (Functor m, Applicative m, Monad m) => (Type -> m Type) ->
 everywhereOnTypesM f = go
   where
   go (TypeApp t1 t2) = (TypeApp <$> go t1 <*> go t2) >>= f
+  go (FunctionType ts t) = (FunctionType <$> mapM go ts <*> go t) >>= f
+  go (TypesTuple ts) = (TypesTuple <$> mapM go ts) >>= f
   go (ForAll arg ty sco) = (ForAll arg <$> go ty <*> pure sco) >>= f
   go (ConstrainedType cs ty) = (ConstrainedType <$> mapM (sndM (mapM go)) cs <*> go ty) >>= f
   go (RCons name ty rest) = (RCons name <$> go ty <*> go rest) >>= f
   go (KindedType ty k) = (KindedType <$> go ty <*> pure k) >>= f
-  go (PrettyPrintFunction t1 t2) = (PrettyPrintFunction <$> go t1 <*> go t2) >>= f
   go (PrettyPrintObject t) = (PrettyPrintObject <$> go t) >>= f
   go (PrettyPrintForAll args t) = (PrettyPrintForAll args <$> go t) >>= f
   go other = f other
@@ -277,11 +292,12 @@ everywhereOnTypesTopDownM :: (Functor m, Applicative m, Monad m) => (Type -> m T
 everywhereOnTypesTopDownM f = go <=< f
   where
   go (TypeApp t1 t2) = TypeApp <$> (f t1 >>= go) <*> (f t2 >>= go)
+  go (FunctionType ts t) = FunctionType <$> mapM (go <=< f) ts <*> (f t >>= go)
+  go (TypesTuple ts) = TypesTuple <$> mapM (go <=< f) ts
   go (ForAll arg ty sco) = ForAll arg <$> (f ty >>= go) <*> pure sco
   go (ConstrainedType cs ty) = ConstrainedType <$> mapM (sndM (mapM (go <=< f))) cs <*> (f ty >>= go)
   go (RCons name ty rest) = RCons name <$> (f ty >>= go) <*> (f rest >>= go)
   go (KindedType ty k) = KindedType <$> (f ty >>= go) <*> pure k
-  go (PrettyPrintFunction t1 t2) = PrettyPrintFunction <$> (f t1 >>= go) <*> (f t2 >>= go)
   go (PrettyPrintObject t) = PrettyPrintObject <$> (f t >>= go)
   go (PrettyPrintForAll args t) = PrettyPrintForAll args <$> (f t >>= go)
   go other = f other
@@ -290,11 +306,12 @@ everythingOnTypes :: (r -> r -> r) -> (Type -> r) -> Type -> r
 everythingOnTypes (<>) f = go
   where
   go t@(TypeApp t1 t2) = f t <> go t1 <> go t2
+  go t@(FunctionType tys ty) = foldl (<>) (f t) (map go tys) <> go ty
+  go t@(TypesTuple tys) = foldl (<>) (f t) (map go tys)
   go t@(ForAll _ ty _) = f t <> go ty
   go t@(ConstrainedType cs ty) = foldl (<>) (f t) (map go $ concatMap snd cs) <> go ty
   go t@(RCons _ ty rest) = f t <> go ty <> go rest
   go t@(KindedType ty _) = f t <> go ty
-  go t@(PrettyPrintFunction t1 t2) = f t <> go t1 <> go t2
   go t@(PrettyPrintObject t1) = f t <> go t1
   go t@(PrettyPrintForAll _ t1) = f t <> go t1
   go other = f other
@@ -304,11 +321,12 @@ everythingWithContextOnTypes s0 r0 (<>) f = go' s0
   where
   go' s t = let (s', r) = f s t in r <> go s' t
   go s (TypeApp t1 t2) = go' s t1 <> go' s t2
+  go s (FunctionType tys ty) = foldl (<>) (go' s ty) (map (go' s) tys)
+  go s (TypesTuple tys) = foldl1 (<>) (map (go' s) tys)
   go s (ForAll _ ty _) = go' s ty
   go s (ConstrainedType cs ty) = foldl (<>) r0 (map (go' s) $ concatMap snd cs) <> go' s ty
   go s (RCons _ ty rest) = go' s ty <> go' s rest
   go s (KindedType ty _) = go' s ty
-  go s (PrettyPrintFunction t1 t2) = go' s t1 <> go' s t2
   go s (PrettyPrintObject t1) = go' s t1
   go s (PrettyPrintForAll _ t1) = go' s t1
   go _ _ = r0

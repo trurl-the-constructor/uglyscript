@@ -212,7 +212,7 @@ createTemporaryModule exec PSCiState{psciImportedModules = imports, psciLetBindi
   let
     moduleName = P.ModuleName [P.ProperName "$PSCI"]
     trace = P.Var (P.Qualified (Just supportModuleName) (P.Ident "eval"))
-    mainValue = P.App trace (P.Var (P.Qualified Nothing (P.Ident "it")))
+    mainValue = P.App trace [P.Var (P.Qualified Nothing (P.Ident "it"))]
     itDecl = P.ValueDeclaration (P.Ident "it") P.Public [] $ Right val
     mainDecl = P.ValueDeclaration (P.Ident "main") P.Public [] $ Right mainValue
     decls = if exec then [itDecl, mainDecl] else [itDecl]

@@ -45,10 +45,10 @@ desugarObjectConstructors (Module ss coms mn ds exts) = Module ss coms mn <$> ma
   desugarExpr (ObjectUpdater (Just obj) ps) = wrapLambda (ObjectUpdate obj) ps
   desugarExpr (ObjectUpdater Nothing ps) = do
     obj <- Ident <$> freshName
-    Abs (Left obj) <$> wrapLambda (ObjectUpdate (Var (Qualified Nothing obj))) ps
+    Abs (Left [obj]) <$> wrapLambda (ObjectUpdate (Var (Qualified Nothing obj))) ps
   desugarExpr (ObjectGetter prop) = do
     arg <- Ident <$> freshName
-    return $ Abs (Left arg) (Accessor prop (Var (Qualified Nothing arg)))
+    return $ Abs (Left [arg]) (Accessor prop (Var (Qualified Nothing arg)))
   desugarExpr e = return e
 
   wrapLambda :: ([(String, Expr)] -> Expr) -> [(String, Maybe Expr)] -> m Expr
@@ -58,7 +58,7 @@ desugarObjectConstructors (Module ss coms mn ds exts) = Module ss coms mn <$> ma
        then return . mkVal $ second fromJust `map` props
        else do
         (args', ps') <- unzip <$> mapM mkProp ps
-        return $ foldr (Abs . Left) (mkVal ps') (catMaybes args')
+        return $ foldr (\a -> Abs (Left [a])) (mkVal ps') (catMaybes args')
 
   mkProp :: (String, Maybe Expr) -> m (Maybe Ident, (String, Expr))
   mkProp (name, Just e) = return (Nothing, (name, e))

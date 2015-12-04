@@ -207,29 +207,29 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ =
     in return $ JSFunction Nothing (map identToJs args) (JSBlock $ map assign args)
     where
     unAbs :: Expr Ann -> [Ident]
-    unAbs (Abs _ arg val) = arg : unAbs val
+    unAbs (Abs _ ids val) = ids ++ unAbs val
     unAbs _ = []
     assign :: Ident -> JS
     assign name = JSAssignment (accessorString (runIdent name) (JSVar "this"))
                                (var name)
-  valueToJs (Abs _ arg val) = do
-    ret <- valueToJs val
-    return $ JSFunction Nothing [identToJs arg] (JSBlock [JSReturn ret])
+  valueToJs (Abs _ ids body) = do
+    jsBlock@(JSBlock{}) <- valueToJsReturn body
+    return $ JSFunction Nothing (map identToJs ids) jsBlock
   valueToJs e@App{} = do
-    let (f, args) = unApp e []
-    args' <- mapM valueToJs args
+    let (f, tuples) = unApp e []
+    tuples' <- mapM (mapM valueToJs) tuples
     case f of
-      Var (_, _, _, Just IsNewtype) _ -> return (head args')
-      Var (_, _, _, Just (IsConstructor _ fields)) name | length args == length fields ->
-        return $ JSUnary JSNew $ JSApp (qualifiedToJS id name) args'
+      Var (_, _, _, Just IsNewtype) _ -> undefined -- return (head tuples')
+      Var (_, _, _, Just (IsConstructor _ fields)) name | length tuples == length fields ->
+        undefined -- return $ JSUnary JSNew $ JSApp (qualifiedToJS id name) args'
       Var (_, _, _, Just IsTypeClassConstructor) name ->
-        return $ JSUnary JSNew $ JSApp (qualifiedToJS id name) args'
-      _ -> flip (foldl (\fn a -> JSApp fn [a])) args' <$> valueToJs f
+        undefined -- return $ JSUnary JSNew $ JSApp (qualifiedToJS id name) args'
+      _ -> flip (foldl (\fn args -> JSApp fn args)) tuples' <$> valueToJs f
 
     where
-    unApp :: Expr Ann -> [Expr Ann] -> (Expr Ann, [Expr Ann])
-    unApp (App _ val arg) args = unApp val (arg : args)
-    unApp other args = (other, args)
+    unApp :: Expr Ann -> [[Expr Ann]] -> (Expr Ann, [[Expr Ann]])
+    unApp (App _ val args) tuples = unApp val (args : tuples)
+    unApp other tuples = (other, tuples)
   valueToJs (Var (_, _, _, Just IsForeign) qi@(Qualified (Just mn') ident)) =
     return $ if mn' == mn
              then foreignIdent ident
@@ -241,10 +241,12 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ =
   valueToJs (Case (maybeSpan, _, _, _) values binders) = do
     vals <- mapM valueToJs values
     bindersToJs maybeSpan binders vals
-  valueToJs (Let _ ds val) = do
-    ds' <- concat <$> mapM bindToJs ds
-    ret <- valueToJs val
-    return $ JSApp (JSFunction Nothing [] (JSBlock (ds' ++ [JSReturn ret]))) []
+  valueToJs val@(Let {}) = do
+    jsBlock@(JSBlock{}) <- valueToJsReturn val
+    return $ JSApp (JSFunction Nothing [] jsBlock) []
+  valueToJs seq@(Seq{}) = do
+    jsBlock <- valueToJsReturn seq
+    return $ JSApp (JSFunction Nothing [] jsBlock) []
   valueToJs (Constructor (_, _, _, Just IsNewtype) _ (ProperName ctor) _) =
     return $ JSVariableIntroduction ctor (Just $
                 JSObjectLiteral [("create",
@@ -264,6 +266,19 @@ moduleToJs (Module coms mn imps exps foreigns decls) foreign_ =
     in return $ iife ctor [ constructor
                           , JSAssignment (JSAccessor "create" (JSVar ctor)) createFn
                           ]
+
+  valueToJsReturn :: Expr Ann -> m JS
+  valueToJsReturn (Seq _ v1 v2)   = do
+    js1 <- valueToJs v1
+    (JSBlock js2) <- valueToJsReturn v2
+    return $ JSBlock (js1 : js2)
+  valueToJsReturn (Let _ decls' val) = do
+    jsDecls <- concat <$> mapM bindToJs decls'
+    (JSBlock js) <- valueToJsReturn val
+    return $ JSBlock (jsDecls ++ js)
+  valueToJsReturn val = do
+    js <- valueToJs val
+    return $ JSBlock [JSReturn js]
 
   iife :: String -> [JS] -> JS
   iife v exprs = JSApp (JSFunction Nothing [] (JSBlock $ exprs ++ [JSReturn $ JSVar v])) []

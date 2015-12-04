@@ -268,7 +268,7 @@ typeInstanceDictionaryDeclaration name mn deps className tys decls =
       -- The type is an object type, but depending on type instance dependencies, may be constrained.
       -- The dictionary itself is an object literal.
       let superclasses = superClassDictionaryNames implies `zip`
-            [ Abs (Left (Ident C.__unused)) (SuperClassDictionary superclass tyArgs)
+            [ Abs (Left [Ident C.__unused]) (SuperClassDictionary superclass tyArgs)
             | (superclass, suTyArgs) <- implies
             , let tyArgs = map (replaceAllTypeVars (zip (map fst args) tys)) suTyArgs
             ]

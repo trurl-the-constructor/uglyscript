@@ -54,7 +54,7 @@ sortModules ms = do
 -- Calculate a list of used modules based on explicit imports and qualified names
 --
 usedModules :: Declaration -> [ModuleName]
-usedModules = let (f, _, _, _, _) = everythingOnValues (++) forDecls forValues (const []) (const []) (const []) in nub . f
+usedModules = let (f, _, _, _) = everythingOnValues (++) forDecls forValues (const []) (const [])  in nub . f
   where
   forDecls :: Declaration -> [ModuleName]
   forDecls (ImportDeclaration mn _ _ _) = [mn]

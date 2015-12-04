@@ -291,11 +291,14 @@ checkExhaustiveDecls env mn = mapM_ onDecl
   onExpr (Accessor _ e) = onExpr e
   onExpr (ObjectUpdate o es) = onExpr o >> mapM_ (onExpr . snd) es
   onExpr (Abs _ e) = onExpr e
-  onExpr (App e1 e2) = onExpr e1 >> onExpr e2
+  onExpr (App e es) = onExpr e >> mapM_ onExpr es
   onExpr (IfThenElse e1 e2 e3) = onExpr e1 >> onExpr e2 >> onExpr e3
   onExpr (Case es cas) = checkExhaustive env mn (length es) cas >> mapM_ onExpr es >> mapM_ onCaseAlternative cas
   onExpr (TypedValue _ e _) = onExpr e
   onExpr (Let ds e) = mapM_ onDecl ds >> onExpr e
+  onExpr (Seq e1 e2) = onExpr e1 >> onExpr e2
+  onExpr (Tuple es) = mapM_ onExpr es
+  onExpr (Assign _ e) = onExpr e
   onExpr (PositionedValue pos _ e) = censor (addHint (PositionedError pos)) (onExpr e)
   onExpr _ = return ()
 

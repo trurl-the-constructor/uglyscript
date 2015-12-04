@@ -66,7 +66,7 @@ removeSignedLiterals (Module ss coms mn ds exts) = Module ss coms mn (map f' ds)
   where
   (f', _, _) = everywhereOnValues id go id
 
-  go (UnaryMinus val) = App (Var (Qualified Nothing (Ident C.negate))) val
+  go (UnaryMinus val) = App (Var (Qualified Nothing (Ident C.negate))) [val]
   go other = other
 
 rebracketModule :: (Applicative m, MonadError MultipleErrors m) => [[(Qualified Ident, Expr -> Expr -> Expr, Associativity)]] -> Module -> m Module
@@ -110,7 +110,7 @@ ensureNoDuplicates m = go $ sortBy (compare `on` fst) m
 customOperatorTable :: [(Qualified Ident, Fixity)] -> [[(Qualified Ident, Expr -> Expr -> Expr, Associativity)]]
 customOperatorTable fixities =
   let
-    applyUserOp ident t1 = App (App (Var ident) t1)
+    applyUserOp ident t1 t2 = App (App (Var ident) [t1]) [t2]
     userOps = map (\(name, Fixity a p) -> (name, applyUserOp name, p, a)) fixities
     sorted = sortBy (flip compare `on` (\(_, _, p, _) -> p)) userOps
     groups = groupBy ((==) `on` (\(_, _, p, _) -> p)) sorted
@@ -130,9 +130,9 @@ matchOperators ops = parseChains
   extendChain other = [Left other]
   bracketChain :: Chain -> m Expr
   bracketChain = either (\_ -> internalError "matchOperators: cannot reorder operators") return . P.parse (P.buildExpressionParser opTable parseValue <* P.eof) "operator expression"
-  opTable = [P.Infix (P.try (parseTicks >>= \op -> return (\t1 t2 -> App (App op t1) t2))) P.AssocLeft]
+  opTable = [P.Infix (P.try (parseTicks >>= \op -> return (\t1 t2 -> App (App op [t1]) [t2]))) P.AssocLeft]
             : map (map (\(name, f, a) -> P.Infix (P.try (matchOp name) >> return f) (toAssoc a))) ops
-            ++ [[ P.Infix (P.try (parseOp >>= \ident -> return (\t1 t2 -> App (App (Var ident) t1) t2))) P.AssocLeft ]]
+            ++ [[ P.Infix (P.try (parseOp >>= \ident -> return (\t1 t2 -> App (App (Var ident) [t1]) [t2]))) P.AssocLeft ]]
 
 toAssoc :: Associativity -> P.Assoc
 toAssoc Infixl = P.AssocLeft
@@ -170,8 +170,8 @@ desugarOperatorSections (Module ss coms mn ds exts) = Module ss coms mn <$> trav
   (goDecl, _, _) = everywhereOnValuesM return goExpr return
 
   goExpr :: Expr -> m Expr
-  goExpr (OperatorSection op (Left val)) = return $ App op val
+  goExpr (OperatorSection op (Left val)) = return $ App op [val]
   goExpr (OperatorSection op (Right val)) = do
     arg <- Ident <$> freshName
-    return $ Abs (Left arg) $ App (App op (Var (Qualified Nothing arg))) val
+    return $ Abs (Left [arg]) $ App (App op [Var (Qualified Nothing arg)]) [val]
   goExpr other = return other

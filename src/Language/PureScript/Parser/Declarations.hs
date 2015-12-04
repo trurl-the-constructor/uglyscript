@@ -104,12 +104,13 @@ parseValueDeclaration = do
   where
   parseValueWithWhereClause :: TokenParser Expr
   parseValueWithWhereClause = do
-    value <- parseValue
+    value <- parsePrimaryValue
     whereClause <- P.optionMaybe $ do
       C.indented
       reserved "where"
       C.indented
       C.mark $ P.many1 (C.same *> parseLocalDeclaration)
+    -- rewrite 'expr where decls' to '(let decls; expr)'
     return $ maybe value (`Let` value) whereClause
 
 parseVariableDeclaration :: TokenParser Declaration
@@ -117,7 +118,7 @@ parseVariableDeclaration = do
   reserved "var"
   ident <- parseIdent
   optAnnotation <- P.optionMaybe $ doubleColon *> parsePolyType
-  initExpr <- assign *> parseValue
+  initExpr <- assign *> parsePrimaryValue
   return $ VariableDeclaration ident $ case optAnnotation of
                                          Just ty -> TypedValue True initExpr ty
                                          Nothing -> initExpr
@@ -259,7 +260,6 @@ parseDeclaration = positioned (P.choice
 parseLocalDeclaration :: TokenParser Declaration
 parseLocalDeclaration = positioned (P.choice
                    [ parseTypeDeclaration
-                   , parseVariableDeclaration
                    , parseValueDeclaration
                    ] P.<?> "local declaration")
 
@@ -349,16 +349,8 @@ parseIdentifierAndValue =
   rest = C.indented *> colon *>  C.indented *>  val
   val = (Just <$> parseValue) <|> (underscore *> pure Nothing)
 
-parseAbs :: TokenParser Expr
-parseAbs = do
-  symbol' "\\"
-  args <- P.many1 (C.indented *> (Abs <$> (Left <$> P.try C.parseIdent <|> Right <$> parseBinderNoParens)))
-  C.indented *> rarrow
-  value <- parseValue
-  return $ toFunction args value
-  where
-  toFunction :: [Expr -> Expr] -> Expr -> Expr
-  toFunction args value = foldr ($) value args
+parseNullaryAbs :: TokenParser Expr
+parseNullaryAbs = Abs (Left []) <$> (symbol' "^" *> parseValueAtom)
 
 parseAssign :: TokenParser Expr
 parseAssign = do
@@ -390,16 +382,6 @@ parseIfThenElse = IfThenElse <$> (P.try (reserved "if") *> C.indented *> parseVa
                              <*> (C.indented *> reserved "then" *> C.indented *> parseValue)
                              <*> (C.indented *> reserved "else" *> C.indented *> parseValue)
 
-parseLet :: TokenParser Expr
-parseLet = do
-  reserved "let"
-  C.indented
-  ds <- C.mark $ P.many1 (C.same *> parseLocalDeclaration)
-  C.indented
-  reserved "in"
-  result <- parseValue
-  return $ Let ds result
-
 parseValueAtom :: TokenParser Expr
 parseValueAtom = P.choice
             [ P.try parseNumericLiteral
@@ -409,15 +391,13 @@ parseValueAtom = P.choice
             , parseArrayLiteral
             , P.try parseObjectLiteral
             , P.try parseObjectGetter
-            , parseAbs
+            , P.try parseBlock
             , P.try parseConstructor
             , P.try parseAssign
             , P.try parseVar
             , parseCase
             , parseIfThenElse
-            , parseDo
-            , parseLet
-            , P.try $ Parens <$> parens parseValue
+            , P.try parseTupleOrValue
             , parseOperatorSection
             , P.try parseObjectUpdaterWildcard ]
 
@@ -431,8 +411,8 @@ parseInfixExpr = P.between tick tick parseValue
 parseOperatorSection :: TokenParser Expr
 parseOperatorSection = parens $ left <|> right
   where
-  right = OperatorSection <$> parseInfixExpr <* indented <*> (Right <$> indexersAndAccessors)
-  left = flip OperatorSection <$> (Left <$> indexersAndAccessors) <* indented <*> parseInfixExpr
+  right = OperatorSection <$> parseInfixExpr <* indented <*> (Right <$> parseValueAtom)
+  left = flip OperatorSection <$> (Left <$> parseValueAtom) <* indented <*> parseInfixExpr
 
 parsePropertyUpdate :: TokenParser (String, Maybe Expr)
 parsePropertyUpdate = do
@@ -445,52 +425,85 @@ parseAccessor :: Expr -> TokenParser Expr
 parseAccessor (Constructor _) = P.unexpected "constructor"
 parseAccessor obj = P.try $ Accessor <$> (C.indented *> dot *> C.indented *> (lname <|> stringLiteral)) <*> pure obj
 
-parseDo :: TokenParser Expr
-parseDo = do
-  reserved "do"
-  C.indented
-  Do <$> C.mark (P.many1 (C.same *> C.mark parseDoNotationElement))
-
-parseDoNotationLet :: TokenParser DoNotationElement
-parseDoNotationLet = DoNotationLet <$> (reserved "let" *> C.indented *> C.mark (P.many1 (C.same *> parseLocalDeclaration)))
-
-parseDoNotationBind :: TokenParser DoNotationElement
-parseDoNotationBind = DoNotationBind <$> parseBinder <*> (C.indented *> larrow *> parseValue)
-
-parseDoNotationElement :: TokenParser DoNotationElement
-parseDoNotationElement = P.choice
-            [ P.try parseDoNotationBind
-            , parseDoNotationLet
-            , P.try (DoNotationValue <$> parseValue) ]
 
 parseObjectGetter :: TokenParser Expr
 parseObjectGetter = ObjectGetter <$> (underscore *> C.indented *> dot *> C.indented *> (lname <|> stringLiteral))
 
--- | Expressions including indexers and record updates
-indexersAndAccessors :: TokenParser Expr
-indexersAndAccessors = C.buildPostfixParser postfixTable parseValueAtom
-  where
-  postfixTable = [ parseAccessor
-                 , P.try . parseUpdaterBody . Just ]
+parseTupleOrValue :: TokenParser Expr
+parseTupleOrValue = do
+  exprs <- parens $ commaSep parseValue
+  case identsOf exprs of
+    Nothing  -> return $ tupleOrVal exprs
+    Just ids -> parseIdsTupleCont ids exprs
+
+    where
+      tupleOrVal :: [Expr] -> Expr
+      tupleOrVal [expr] = Parens expr
+      tupleOrVal exprs  = Tuple exprs
+
+      parseIdsTupleCont :: [Ident] -> [Expr] -> TokenParser Expr
+      parseIdsTupleCont ids exprs =
+          (do rarrow
+              body <- parseValue
+              return $ Abs (Left ids) body)
+          <|> (return $ tupleOrVal exprs)
+
+      identsOf :: [Expr] -> Maybe [Ident]
+      identsOf (PositionedValue _ _ (Var (Qualified Nothing ident)) : exprs) =
+          do ids <- identsOf exprs
+             return $ ident : ids
+      identsOf []  = return []
+      identsOf _   = Nothing
 
 -- |
--- Parse a value
+-- Parse a sequence of primary values and local (let- and var-) declarations
 --
 parseValue :: TokenParser Expr
-parseValue = withSourceSpan PositionedValue
+parseValue = C.mark parseSeqItem
+    where
+      parseSeqItem = parseLetItem <|> parseVarItem <|> parseExprItem
+
+      parseLetItem = do
+        reserved "let"
+        decls <- C.indented *> (C.mark $ P.many1 (C.same *> parseLocalDeclaration))
+        Let decls <$> ((C.same <|> semi) *> parseSeqItem)
+
+      parseVarItem = do
+        decl <- parseVariableDeclaration
+        Let [decl] <$> ((C.same <|> semi) *> parseSeqItem)
+
+      parseExprItem = do
+        expr <- parsePrimaryValue
+        (Seq expr <$> ((C.same <|> semi) *> parseSeqItem)) <|> return expr
+
+parseBlock :: TokenParser Expr
+parseBlock = braces $ do
+               expr <- parseValue
+               return $ Abs (Left []) expr
+
+-- |
+-- Parse a value built from atoms and operators
+--
+parsePrimaryValue :: TokenParser Expr
+parsePrimaryValue = withSourceSpan PositionedValue
   (P.buildExpressionParser operators
-    . C.buildPostfixParser postfixTable
+    . C.buildPostfixParser postfixTable2
     $ indexersAndAccessors) P.<?> "expression"
   where
-  postfixTable = [ \v -> P.try (flip App <$> (C.indented *> indexersAndAccessors)) <*> pure v
-                 , \v -> flip (TypedValue True) <$> (P.try (C.indented *> doubleColon) *> parsePolyType) <*> pure v
-                 ]
+  indexersAndAccessors = C.buildPostfixParser postfixTable1 parseValueAtom
+  postfixTable1 = [ parseAccessor
+                  , P.try . parseUpdaterBody . Just ]
+  postfixTable2 = [ \v -> P.try (makeApp <$> (C.indented *> indexersAndAccessors)) <*> pure v
+                  , \v -> flip (TypedValue True) <$> (P.try (C.indented *> doubleColon) *> parsePolyType) <*> pure v
+                  ]
   operators = [ [ P.Prefix (P.try (C.indented *> symbol' "-") >> return UnaryMinus)
                 ]
               , [ P.Infix (P.try (C.indented *> parseInfixExpr P.<?> "infix expression") >>= \ident ->
                     return (BinaryNoParens ident)) P.AssocRight
                 ]
               ]
+  makeApp (Tuple args) expr = App expr args
+  makeApp arg expr = App expr [arg]
 
 parseUpdaterBody :: Maybe Expr -> TokenParser Expr
 parseUpdaterBody v = ObjectUpdater v <$> (C.indented *> braces (commaSep1 (C.indented *> parsePropertyUpdate)))

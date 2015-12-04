@@ -351,11 +351,11 @@ data Expr
   -- |
   -- Function introduction
   --
-  | Abs (Either Ident Binder) Expr
+  | Abs (Either [Ident] Binder) Expr
   -- |
   -- Function application
   --
-  | App Expr Expr
+  | App Expr [Expr]
   -- |
   -- Variable
   --
@@ -386,9 +386,17 @@ data Expr
   --
   | Let [Declaration] Expr
   -- |
-  -- A do-notation block
+  -- Sequential composition of expressions
   --
-  | Do [DoNotationElement]
+  | Seq Expr Expr
+  -- |
+  -- Block of expressions { ... }
+  --
+  | Block Expr
+  -- |
+  -- Tuple expression
+  --
+  | Tuple [Expr]
   -- |
   -- An application of a typeclass dictionary constructor. The value should be
   -- an ObjectLiteral.
@@ -428,27 +436,6 @@ data CaseAlternative = CaseAlternative
     --
   , caseAlternativeResult :: Either [(Guard, Expr)] Expr
   } deriving (Show, Read, D.Data, D.Typeable)
-
--- |
--- A statement in a do-notation block
---
-data DoNotationElement
-  -- |
-  -- A monadic value without a binder
-  --
-  = DoNotationValue Expr
-  -- |
-  -- A monadic value with a binder
-  --
-  | DoNotationBind Binder Expr
-  -- |
-  -- A let statement, i.e. a pure value with a binder
-  --
-  | DoNotationLet [Declaration]
-  -- |
-  -- A do notation element with source position information
-  --
-  | PositionedDoNotationElement SourceSpan [Comment] DoNotationElement deriving (Show, Read, D.Data, D.Typeable)
 
 $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''DeclarationRef)
 $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''ImportDeclarationType)

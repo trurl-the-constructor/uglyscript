@@ -59,7 +59,7 @@ moduleToCoreFn env (A.Module _ coms mn decls (Just exps)) =
   declToCoreFn :: Maybe SourceSpan -> [Comment] -> A.Declaration -> [Bind Ann]
   declToCoreFn ss com (A.DataDeclaration Newtype _ _ [(ctor, _)]) =
     [NonRec (properToIdent ctor) $
-       Abs (ss, com, Nothing, Just IsNewtype) (Ident "x") (Var nullAnn $ Qualified Nothing (Ident "x"))]
+       Abs (ss, com, Nothing, Just IsNewtype) [Ident "x"] (Var nullAnn $ Qualified Nothing (Ident "x"))]
   declToCoreFn _ _ d@(A.DataDeclaration Newtype _ _ _) =
     error $ "Found newtype with multiple constructors: " ++ show d
   declToCoreFn ss com (A.DataDeclaration Data tyName _ ctors) =
@@ -103,12 +103,12 @@ moduleToCoreFn env (A.Module _ coms mn decls (Just exps)) =
     Accessor (ss, com, ty, Nothing) name (exprToCoreFn ss [] Nothing v)
   exprToCoreFn ss com ty (A.ObjectUpdate obj vs) =
     ObjectUpdate (ss, com, ty, Nothing) (exprToCoreFn ss [] Nothing obj) $ map (second (exprToCoreFn ss [] Nothing)) vs
-  exprToCoreFn ss com ty (A.Abs (Left name) v) =
-    Abs (ss, com, ty, Nothing) name (exprToCoreFn ss [] Nothing v)
+  exprToCoreFn ss com ty (A.Abs (Left names) v) =
+    Abs (ss, com, ty, Nothing) names (exprToCoreFn ss [] Nothing v)
   exprToCoreFn _ _ _ (A.Abs _ _) =
     internalError "Abs with Binder argument was not desugared before exprToCoreFn mn"
-  exprToCoreFn ss com ty (A.App v1 v2) =
-    App (ss, com, ty, Nothing) (exprToCoreFn ss [] Nothing v1) (exprToCoreFn ss [] Nothing v2)
+  exprToCoreFn ss com ty (A.App v1 vs) =
+    App (ss, com, ty, Nothing) (exprToCoreFn ss [] Nothing v1) (map (exprToCoreFn ss [] Nothing) vs)
   exprToCoreFn ss com ty (A.Var ident) =
     Var (ss, com, ty, getValueMeta ident) ident
   exprToCoreFn ss com ty (A.IfThenElse v1 v2 v3) =
@@ -125,14 +125,16 @@ moduleToCoreFn env (A.Module _ coms mn decls (Just exps)) =
     exprToCoreFn ss com (Just ty) v
   exprToCoreFn ss com ty (A.Let ds v) =
     Let (ss, com, ty, Nothing) (concatMap (declToCoreFn ss []) ds) (exprToCoreFn ss [] Nothing v)
+  exprToCoreFn ss com ty (A.Seq v1 v2) =
+    Seq (ss, com, ty, Nothing) (exprToCoreFn ss [] Nothing v1) (exprToCoreFn ss [] Nothing v2)
   exprToCoreFn ss com ty (A.Assign name expr) =
     exprToCoreFn ss com ty (Prim.writeVarCall name expr)
   exprToCoreFn ss com _  (A.TypeClassDictionaryConstructorApp name (A.TypedValue _ (A.ObjectLiteral vs) _)) =
     let args = map (exprToCoreFn ss [] Nothing . snd) $ sortBy (compare `on` fst) vs
         ctor = Var (ss, [], Nothing, Just IsTypeClassConstructor) (fmap properToIdent name)
-    in foldl (App (ss, com, Nothing, Nothing)) ctor args
+    in foldl (\f a -> App (ss, com, Nothing, Nothing) f [a]) ctor args
   exprToCoreFn ss com ty  (A.TypeClassDictionaryAccessor _ ident) =
-    Abs (ss, com, ty, Nothing) (Ident "dict")
+    Abs (ss, com, ty, Nothing) [Ident "dict"]
       (Accessor nullAnn (runIdent ident) (Var nullAnn $ Qualified Nothing (Ident "dict")))
   exprToCoreFn _ com ty (A.PositionedValue ss com1 v) =
     exprToCoreFn (Just ss) (com ++ com1) ty v
@@ -212,7 +214,7 @@ moduleToCoreFn env (A.Module _ coms mn decls (Just exps)) =
 --
 findQualModules :: [A.Declaration] -> [ModuleName]
 findQualModules decls =
-  let (f, _, _, _, _) = everythingOnValues (++) fqDecls fqValues fqBinders (const []) (const [])
+  let (f, _, _, _) = everythingOnValues (++) fqDecls fqValues fqBinders (const [])
   in f `concatMap` decls
   where
   fqDecls :: A.Declaration -> [ModuleName]
@@ -269,8 +271,8 @@ mkTypeClassConstructor ss com supers members =
       props = [ (arg, Var nullAnn $ Qualified Nothing (Ident arg)) | arg <- args ]
       dict = Literal nullAnn (ObjectLiteral props)
   in Abs (ss, com, Nothing, Just IsTypeClassConstructor)
-         (Ident a)
-         (foldr (Abs nullAnn . Ident) dict as)
+         [Ident a]
+         (foldr (\a' expr -> Abs nullAnn [Ident a'] expr) dict as)
 
 -- |
 -- Converts a ProperName to an Ident.

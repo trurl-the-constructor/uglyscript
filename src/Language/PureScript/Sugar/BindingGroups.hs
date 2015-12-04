@@ -108,10 +108,11 @@ usedIdents moduleName = nub . usedIdents' S.empty . getValue
 
   getValue (ValueDeclaration _ _ [] (Right val)) = val
   getValue ValueDeclaration{} = internalError "Binders should have been desugared"
+  getValue (VariableDeclaration _ val) = val
   getValue (PositionedDeclaration _ _ d) = getValue d
   getValue _ = internalError "Expected ValueDeclaration"
 
-  (_, usedIdents', _, _, _) = everythingWithScope def usedNamesE def def def
+  (_, usedIdents', _, _) = everythingWithScope def usedNamesE def def
 
   usedNamesE :: S.Set Ident -> Expr -> [Ident]
   usedNamesE scope (Var (Qualified Nothing name)) | name `S.notMember` scope = [name]
@@ -120,7 +121,7 @@ usedIdents moduleName = nub . usedIdents' S.empty . getValue
 
 usedImmediateIdents :: ModuleName -> Declaration -> [Ident]
 usedImmediateIdents moduleName =
-  let (f, _, _, _, _) = everythingWithContextOnValues True [] (++) def usedNamesE def def def
+  let (f, _, _, _) = everythingWithContextOnValues True [] (++) def usedNamesE def def
   in nub . f
   where
   def s _ = (s, [])
@@ -133,7 +134,7 @@ usedImmediateIdents moduleName =
 
 usedProperNames :: ModuleName -> Declaration -> [ProperName]
 usedProperNames moduleName =
-  let (f, _, _, _, _) = accumTypes (everythingOnTypes (++) usedNames)
+  let (f, _, _, _) = accumTypes (everythingOnTypes (++) usedNames)
   in nub . f
   where
   usedNames :: Type -> [ProperName]
@@ -206,5 +207,6 @@ isTypeSynonym _ = Nothing
 fromValueDecl :: Declaration -> (Ident, NameKind, Expr)
 fromValueDecl (ValueDeclaration ident nameKind [] (Right val)) = (ident, nameKind, val)
 fromValueDecl ValueDeclaration{} = internalError "Binders should have been desugared"
+fromValueDecl (VariableDeclaration ident val) = (ident, Variable, val)
 fromValueDecl (PositionedDeclaration _ _ d) = fromValueDecl d
 fromValueDecl _ = internalError "Expected ValueDeclaration"

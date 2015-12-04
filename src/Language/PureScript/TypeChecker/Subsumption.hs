@@ -28,6 +28,7 @@ import Control.Applicative
 #endif
 import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.State.Class (MonadState(..))
+import Control.Monad (zipWithM)
 
 import Language.PureScript.Crash
 import Language.PureScript.AST
@@ -58,8 +59,8 @@ subsumes' val ty1 (ForAll ident ty2 sco) =
       let sk = skolemize ident sko sco' Nothing ty2
       subsumes val ty1 sk
     Nothing -> internalError "subsumes: unspecified skolem scope"
-subsumes' val (TypeApp (TypeApp f1 arg1) ret1) (TypeApp (TypeApp f2 arg2) ret2) | f1 == tyFunction && f2 == tyFunction = do
-  _ <- subsumes Nothing arg2 arg1
+subsumes' val (FunctionType args1 ret1) (FunctionType args2 ret2) = do
+  _ <- zipWithM (subsumes Nothing) args2 args1
   _ <- subsumes Nothing ret1 ret2
   return val
 subsumes' val (KindedType ty1 _) ty2 =
@@ -68,7 +69,7 @@ subsumes' val ty1 (KindedType ty2 _) =
   subsumes val ty1 ty2
 subsumes' (Just val) (ConstrainedType constraints ty1) ty2 = do
   dicts <- getTypeClassDictionaries
-  subsumes' (Just $ foldl App val (map (flip TypeClassDictionary dicts) constraints)) ty1 ty2
+  subsumes' (Just $ foldl (\e a -> App e [a]) val (map (flip TypeClassDictionary dicts) constraints)) ty1 ty2
 subsumes' val (TypeApp f1 r1) (TypeApp f2 r2) | f1 == tyObject && f2 == tyObject = do
   let
     (ts1, r1') = rowToList r1

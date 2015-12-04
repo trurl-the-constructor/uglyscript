@@ -57,8 +57,8 @@ prettyPrintValue d (IfThenElse cond th el) =
 prettyPrintValue d (Accessor prop val) = prettyPrintValueAtom (d - 1) val <> text ("." ++ show prop)
 prettyPrintValue d (ObjectUpdate o ps) = prettyPrintValueAtom (d - 1) o <> text " " <> list '{' '}' (\(key, val) -> text (key ++ " = ") <> prettyPrintValue (d - 1) val) ps
 prettyPrintValue d (ObjectUpdater o ps) = maybe (text "_") (prettyPrintValueAtom (d - 1)) o <> text " " <> list '{' '}' (\(key, val) -> text (key ++ " = ") <> maybe (text "_") (prettyPrintValue (d - 1)) val) ps
-prettyPrintValue d (App val arg) = prettyPrintValueAtom (d - 1) val `beforeWithSpace` prettyPrintValueAtom (d - 1) arg
-prettyPrintValue d (Abs (Left arg) val) = text ('\\' : showIdent arg ++ " -> ") // moveRight 2 (prettyPrintValue (d - 1) val)
+prettyPrintValue d (App val args) = prettyPrintValueAtom (d - 1) val `beforeWithSpace` (list '(' ')' (prettyPrintValueAtom (d - 1)) args)
+prettyPrintValue d (Abs (Left args) val) = (list '(' ')' (text . showIdent) args <> text "->") // moveRight 2 (prettyPrintValue (d - 1) val)
 prettyPrintValue d (TypeClassDictionaryConstructorApp className ps) =
   text (runProperName (disqualify className) ++ " ") <> prettyPrintValueAtom (d - 1) ps
 prettyPrintValue d (Case values binders) =
@@ -68,8 +68,9 @@ prettyPrintValue d (Let ds val) =
   text "let" //
     moveRight 2 (vcat left (map (prettyPrintDeclaration (d - 1)) ds)) //
     (text "in " <> prettyPrintValue (d - 1) val)
-prettyPrintValue d (Do els) =
-  text "do " <> vcat left (map (prettyPrintDoNotationElement (d - 1)) els)
+prettyPrintValue d (Seq v1 v2) = prettyPrintValue (d - 1) v1 // prettyPrintValue (d - 1) v2
+prettyPrintValue d (Tuple vs) = list '(' ')' (prettyPrintValue (d - 1)) vs
+prettyPrintValue d (Assign ident rhs) = text (showIdent (disqualify ident)) <> text ":=" <> prettyPrintValue (d - 1) rhs
 prettyPrintValue _ (TypeClassDictionary (name, tys) _) = foldl1 beforeWithSpace $ text ("#dict " ++ runProperName (disqualify name)) : map typeAtomAsBox tys
 prettyPrintValue _ (SuperClassDictionary name _) = text $ "#dict " ++ runProperName (disqualify name)
 prettyPrintValue d (TypedValue _ val _) = prettyPrintValue d val
@@ -125,17 +126,6 @@ prettyPrintCaseAlternative d (CaseAlternative binders result) =
     , text " -> "
     , prettyPrintValue (d - 1) val
     ]
-
-prettyPrintDoNotationElement :: Int -> DoNotationElement -> Box
-prettyPrintDoNotationElement d _ | d < 0 = ellipsis
-prettyPrintDoNotationElement d (DoNotationValue val) =
-  prettyPrintValue d val
-prettyPrintDoNotationElement d (DoNotationBind binder val) =
-  text (prettyPrintBinder binder ++ " <- ") <> prettyPrintValue d val
-prettyPrintDoNotationElement d (DoNotationLet ds) =
-  text "let" //
-    moveRight 2 (vcat left (map (prettyPrintDeclaration (d - 1)) ds))
-prettyPrintDoNotationElement d (PositionedDoNotationElement _ _ el) = prettyPrintDoNotationElement d el
 
 prettyPrintBinderAtom :: Binder -> String
 prettyPrintBinderAtom NullBinder = "_"

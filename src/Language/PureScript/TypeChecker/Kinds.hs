@@ -255,4 +255,12 @@ infer' other = (, []) <$> go other
     k <- go ty
     unifyKinds k Star
     return Star
-  go _ = internalError "Invalid argument to infer"
+  go (FunctionType argTs retTy) = do
+    forM_ argTs $ \argTy -> do
+      argKind <- go argTy
+      unifyKinds argKind Star
+      return ()
+    retKind <- go retTy
+    unifyKinds retKind Star
+    return Star
+  go _ = error "Invalid argument to infer"

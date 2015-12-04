@@ -57,7 +57,7 @@ lint (Module _ _ mn ds _) = censor (addHint (ErrorInModule mn)) $ mapM_ lintDecl
   lintDeclaration :: Declaration -> m ()
   lintDeclaration = tell . f
     where
-    (warningsInDecl, _, _, _, _) = everythingWithScope stepD stepE stepB (\_ _ -> mempty) stepDo
+    (warningsInDecl, _, _, _) = everythingWithScope stepD stepE stepB (\_ _ -> mempty)
 
     f :: Declaration -> MultipleErrors
     f (PositionedDeclaration pos _ dec) = addHint (PositionedError pos) (f dec)
@@ -75,7 +75,11 @@ lint (Module _ _ mn ds _) = censor (addHint (ErrorInModule mn)) $ mapM_ lintDecl
     stepD _ _ = mempty
 
     stepE :: S.Set Ident -> Expr -> MultipleErrors
-    stepE s (Abs (Left name) _) | name `S.member` s = errorMessage (ShadowedName name)
+    stepE s (Abs (Left names) _) =
+        if null common then mempty
+        else errorMessage (ShadowedName (head common))
+            where common = S.elems (nameSet `S.intersection` s)
+                  nameSet = S.fromList names
     stepE s (Let ds' _) = foldMap go ds'
       where
       go d | Just i <- getDeclIdent d
@@ -88,16 +92,8 @@ lint (Module _ _ mn ds _) = censor (addHint (ErrorInModule mn)) $ mapM_ lintDecl
     stepB s (NamedBinder name _) | name `S.member` s = errorMessage (ShadowedName name)
     stepB _ _ = mempty
 
-    stepDo :: S.Set Ident -> DoNotationElement -> MultipleErrors
-    stepDo s (DoNotationLet ds') = foldMap go ds'
-      where
-      go d | Just i <- getDeclIdent d
-           , i `S.member` s = errorMessage (ShadowedName i)
-           | otherwise = mempty
-    stepDo _ _ = mempty
-
   checkTypeVarsInDecl :: Declaration -> MultipleErrors
-  checkTypeVarsInDecl d = let (f, _, _, _, _) = accumTypes checkTypeVars in f d
+  checkTypeVarsInDecl d = let (f, _, _, _) = accumTypes checkTypeVars in f d
 
   checkTypeVars :: Type -> MultipleErrors
   checkTypeVars ty = everythingWithContextOnTypes S.empty mempty mappend step ty <> findUnused ty

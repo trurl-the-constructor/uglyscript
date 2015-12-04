@@ -136,7 +136,7 @@ renameInModule env imports (Module ss coms mn decls exps) =
   Module ss coms mn <$> parU decls go <*> pure exps
   where
 
-  (go, _, _, _, _) = everywhereWithContextOnValuesM (Nothing, []) updateDecl updateValue updateBinder updateCase defS
+  (go, _, _, _) = everywhereWithContextOnValuesM (Nothing, []) updateDecl updateValue updateBinder updateCase
 
   updateDecl :: (Maybe SourceSpan, [Ident]) -> Declaration -> m ((Maybe SourceSpan, [Ident]), Declaration)
   updateDecl (_, bound) d@(PositionedDeclaration pos _ _) =
@@ -158,8 +158,8 @@ renameInModule env imports (Module ss coms mn decls exps) =
   updateValue :: (Maybe SourceSpan, [Ident]) -> Expr -> m ((Maybe SourceSpan, [Ident]), Expr)
   updateValue (_, bound) v@(PositionedValue pos' _ _) =
     return ((Just pos', bound), v)
-  updateValue (pos, bound) (Abs (Left arg) val') =
-    return ((pos, arg : bound), Abs (Left arg) val')
+  updateValue (pos, bound) (Abs (Left args) val') =
+    return ((pos, args ++ bound), Abs (Left args) val')
   updateValue (pos, bound) (Let ds val') = do
     let args = mapMaybe letBoundVariable ds
     unless (length (nub args) == length args) $

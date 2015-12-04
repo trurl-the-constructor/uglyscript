@@ -39,7 +39,7 @@ module Language.PureScript.TypeChecker.Types (
 -}
 
 import Prelude ()
-import Prelude.Compat
+import Prelude.Compat hiding (mapM)
 
 import Data.Either (lefts, rights)
 import Data.List (transpose, nub, (\\), partition, delete)
@@ -214,7 +214,7 @@ instantiatePolyTypeWithUnknowns val (ForAll ident ty _) = do
   instantiatePolyTypeWithUnknowns val ty'
 instantiatePolyTypeWithUnknowns val (ConstrainedType constraints ty) = do
    dicts <- getTypeClassDictionaries
-   instantiatePolyTypeWithUnknowns (foldl App val (map (flip TypeClassDictionary dicts) constraints)) ty
+   instantiatePolyTypeWithUnknowns (foldl (\e a -> App e [a]) val (map (flip TypeClassDictionary dicts) constraints)) ty
 instantiatePolyTypeWithUnknowns val ty = return (val, ty)
 
 -- | Infer a type for a value, rethrowing any error to provide a more useful error message
@@ -259,16 +259,17 @@ infer' (Accessor prop val) = rethrow (addHint (ErrorCheckingAccessor val prop)) 
   rest <- freshType
   typed <- check val (TypeApp tyObject (RCons prop field rest))
   return $ TypedValue True (Accessor prop typed) field
-infer' (Abs (Left arg) ret) = do
-  ty <- freshType
+infer' (Abs (Left args) ret) = do
+  tys <- mapM (const freshType) args
+  let argsEnv = zipWith (\a t -> (a, t, Defined)) args tys
   Just moduleName <- checkCurrentModule <$> get
-  withBindingGroupVisible $ bindLocalVariables moduleName [(arg, ty, Defined)] $ do
+  withBindingGroupVisible $ bindLocalVariables moduleName argsEnv $ do
     body@(TypedValue _ _ bodyTy) <- infer' ret
-    return $ TypedValue True (Abs (Left arg) body) $ function ty bodyTy
+    return $ TypedValue True (Abs (Left args) body) $ FunctionType tys bodyTy
 infer' (Abs (Right _) _) = internalError "Binder was not desugared"
-infer' (App f arg) = do
+infer' (App f args) = do
   f'@(TypedValue _ _ ft) <- infer f
-  (ret, app) <- checkFunctionApplication f' ft arg Nothing
+  (ret, app) <- checkFunctionApplication f' ft args Nothing
   return $ TypedValue True app ret
 infer' (Var var) = do
   Just moduleName <- checkCurrentModule <$> get
@@ -278,7 +279,7 @@ infer' (Var var) = do
   case ty of
     ConstrainedType constraints ty' -> do
       dicts <- getTypeClassDictionaries
-      return $ TypedValue True (foldl App (Var var) (map (flip TypeClassDictionary dicts) constraints)) ty'
+      return $ TypedValue True (foldl (\e a -> App e [a]) (Var var) (map (flip TypeClassDictionary dicts) constraints)) ty'
     _ -> return $ TypedValue True (Var var) ty
 
 infer' (Assign name val) = do
@@ -308,6 +309,10 @@ infer' (IfThenElse cond th el) = do
 infer' (Let ds val) = do
   (ds', val'@(TypedValue _ _ valTy)) <- inferLetBinding [] ds val infer
   return $ TypedValue True (Let ds' val') valTy
+infer' (Seq v1 v2) = do
+  v1' <- infer v1
+  v2'@(TypedValue _ _ ty) <- infer v2
+  return $ TypedValue True (Seq v1' v2') ty
 infer' (SuperClassDictionary className tys) = do
   dicts <- getTypeClassDictionaries
   return $ TypeClassDictionary (className, tys) dicts
@@ -319,7 +324,7 @@ infer' (TypedValue checkType val ty) = do
   val' <- if checkType then withScopedTypeVars moduleName args (check val ty') else return val
   return $ TypedValue True val' ty'
 infer' (PositionedValue pos _ val) = warnAndRethrowWithPosition pos $ infer' val
-infer' _ = internalError "Invalid argument to infer"
+infer' val = internalError $ "Invalid argument to infer" ++ show val
 
 inferLetBinding ::
   (Functor m, Applicative m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m) =>
@@ -401,7 +406,7 @@ inferBinder val (ConstructorBinder ctor binders) = do
   peelArgs :: Type -> ([Type], Type)
   peelArgs = go []
     where
-    go args (TypeApp (TypeApp fn arg) ret) | fn == tyFunction = go (arg : args) ret
+    go args (FunctionType args' ret) = go (args' ++ args) ret
     go args ret = (args, ret)
 inferBinder val (ObjectBinder props) = do
   row <- freshType
@@ -525,7 +530,7 @@ check' val t@(ConstrainedType constraints ty) = do
     return $ Ident $ "__dict_" ++ className ++ "_" ++ show n
   dicts <- join <$> zipWithM (newDictionaries []) (map (Qualified Nothing) dictNames) constraints
   val' <- withBindingGroupVisible $ withTypeClassDictionaries dicts $ check val ty
-  return $ TypedValue True (foldr (Abs . Left) val' dictNames) t
+  return $ TypedValue True (foldr (\id e -> Abs (Left [id]) e) val' dictNames) t
   where
   -- | Add a dictionary for the constraint to the scope, and dictionaries
   -- for all implied superclass instances.
@@ -562,11 +567,15 @@ check' (ArrayLiteral vals) t@(TypeApp a ty) = do
   unifyTypes a tyArray
   array <- ArrayLiteral <$> forM vals (`check` ty)
   return $ TypedValue True array t
-check' (Abs (Left arg) ret) ty@(TypeApp (TypeApp t argTy) retTy) = do
-  unifyTypes t tyFunction
-  Just moduleName <- checkCurrentModule <$> get
-  ret' <- withBindingGroupVisible $ bindLocalVariables moduleName [(arg, argTy, Defined)] $ check ret retTy
-  return $ TypedValue True (Abs (Left arg) ret') ty
+check' (Abs (Left args) ret) ty@(FunctionType argTys retTy)
+    | length args == length argTys = do
+          let argsEnv = zipWith (\a t -> (a, t, Defined)) args argTys
+          Just moduleName <- checkCurrentModule <$> get
+          ret' <- withBindingGroupVisible
+                  $ bindLocalVariables moduleName argsEnv
+                  $ check ret retTy
+          return $ TypedValue True (Abs (Left args) ret') ty
+    -- | otherwise = throwError . errorMessage $ ExprDoesNotHaveType val ty
 check' (Abs (Right _) _) _ = internalError "Binder was not desugared"
 check' (App f arg) ret = do
   f'@(TypedValue _ _ ft) <- infer f
@@ -645,6 +654,10 @@ check' v@(Constructor c) ty = do
 check' (Let ds val) ty = do
   (ds', val') <- inferLetBinding [] ds val (`check` ty)
   return $ TypedValue True (Let ds' val') ty
+check' (Seq v1 v2) ty = do
+  v1' <- infer v1
+  v2' <- check' v2 ty
+  return $ TypedValue True (Seq v1' v2') ty
 check' val kt@(KindedType ty kind) = do
   checkTypeKind ty kind
   val' <- check' val ty
@@ -699,49 +712,49 @@ checkFunctionApplication ::
   (Functor m, Applicative m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m) =>
   Expr ->
   Type ->
-  Expr ->
+  [Expr] ->
   Maybe Type ->
   m (Type, Expr)
-checkFunctionApplication fn fnTy arg ret = rethrow (addHint (ErrorInApplication fn fnTy arg)) $ do
+checkFunctionApplication fn fnTy args ret = rethrow (addHint (ErrorInApplication fn fnTy (Tuple args))) $ do
   subst <- gets checkSubstitution
-  checkFunctionApplication' fn (substituteType subst fnTy) arg (substituteType subst <$> ret)
+  checkFunctionApplication' fn (substituteType subst fnTy) args (substituteType subst <$> ret)
 
 -- | Check the type of a function application
 checkFunctionApplication' ::
   (Functor m, Applicative m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m) =>
   Expr ->
   Type ->
-  Expr ->
+  [Expr] ->
   Maybe Type ->
   m (Type, Expr)
-checkFunctionApplication' fn (TypeApp (TypeApp tyFunction' argTy) retTy) arg ret = do
-  unifyTypes tyFunction' tyFunction
-  arg' <- check arg argTy
-  case ret of
-    Nothing -> return (retTy, App fn arg')
-    Just ret' -> do
-      Just app' <- subsumes (Just (App fn arg')) retTy ret'
-      return (retTy, app')
-checkFunctionApplication' fn (ForAll ident ty _) arg ret = do
+checkFunctionApplication' fn (FunctionType argTys retTy) args ret
+    | length argTys == length args = do
+          args' <- zipWithM check args argTys
+          case ret of
+            Nothing -> return (retTy, App fn args')
+            Just ret' -> do
+                     Just app' <- subsumes (Just (App fn args')) retTy ret'
+                     return (retTy, app')
+checkFunctionApplication' fn (ForAll ident ty _) args ret = do
   replaced <- replaceVarWithUnknown ident ty
-  checkFunctionApplication fn replaced arg ret
-checkFunctionApplication' fn u@(TUnknown _) arg ret = do
-  arg' <- do
-    TypedValue _ arg' t <- infer arg
-    (arg'', t') <- instantiatePolyTypeWithUnknowns arg' t
-    return $ TypedValue True arg'' t'
-  let ty = (\(TypedValue _ _ t) -> t) arg'
+  checkFunctionApplication fn replaced args ret
+checkFunctionApplication' fn u@(TUnknown _) args ret = do
+  args' <- forM args $ \ arg -> do
+             TypedValue _ arg' t <- infer arg
+             (arg'', t') <- instantiatePolyTypeWithUnknowns arg' t
+             return $ TypedValue True arg'' t'
+  let tys' = map (\(TypedValue _ _ t) -> t) args'
   ret' <- maybe freshType return ret
-  unifyTypes u (function ty ret')
-  return (ret', App fn arg')
-checkFunctionApplication' fn (KindedType ty _) arg ret =
-  checkFunctionApplication fn ty arg ret
-checkFunctionApplication' fn (ConstrainedType constraints fnTy) arg ret = do
+  unifyTypes u (FunctionType tys' ret')
+  return (ret', App fn args')
+checkFunctionApplication' fn (KindedType ty _) args ret =
+  checkFunctionApplication fn ty args ret
+checkFunctionApplication' fn (ConstrainedType constraints fnTy) args ret = do
   dicts <- getTypeClassDictionaries
-  checkFunctionApplication' (foldl App fn (map (flip TypeClassDictionary dicts) constraints)) fnTy arg ret
-checkFunctionApplication' fn fnTy dict@TypeClassDictionary{} _ =
-  return (fnTy, App fn dict)
-checkFunctionApplication' _ fnTy arg _ = throwError . errorMessage $ CannotApplyFunction fnTy arg
+  checkFunctionApplication' (foldl (\e a -> App e [a]) fn (map (flip TypeClassDictionary dicts) constraints)) fnTy args ret
+checkFunctionApplication' fn fnTy [dict@TypeClassDictionary{}] _ =
+  return (fnTy, App fn [dict])
+checkFunctionApplication' _ fnTy args _ = throwError . errorMessage $ CannotApplyFunction fnTy (Tuple args)
 
 -- | Compute the meet of two types, i.e. the most general type which both types subsume.
 -- TODO: is this really needed?
