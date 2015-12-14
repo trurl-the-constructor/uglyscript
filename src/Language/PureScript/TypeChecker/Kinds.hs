@@ -263,4 +263,20 @@ infer' other = (, []) <$> go other
     retKind <- go retTy
     unifyKinds retKind Star
     return Star
+  go (FunctionType argTs retTy) = do
+    forM_ argTs $ \argTy -> do
+      argKind <- go argTy
+      argKind =?= Star
+      return ()
+    retKind <- go retTy
+    retKind =?= Star
+    return Star
+
+  {-
+  go (TupleType tys) = do
+    forM_ tys $ \ ty -> do
+      k <- go ty
+      k =?= Star
+    return Star
+  -}
   go _ = error "Invalid argument to infer"
