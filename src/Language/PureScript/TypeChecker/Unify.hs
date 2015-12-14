@@ -121,6 +121,9 @@ unifyTypes t1 t2 = do
   unifyTypes' (TypeApp t3 t4) (TypeApp t5 t6) = do
     t3 `unifyTypes` t5
     t4 `unifyTypes` t6
+  unifyTypes' (FunctionType argTys1 retTy1) (FunctionType argTys2 retTy2) = do
+    zipWithM unifyTypes argTys1 argTys2
+    retTy1 `unifyTypes` retTy2
   unifyTypes' (Skolem _ s1 _ _) (Skolem _ s2 _ _) | s1 == s2 = return ()
   unifyTypes' (KindedType ty1 _) ty2 = ty1 `unifyTypes` ty2
   unifyTypes' ty1 (KindedType ty2 _) = ty1 `unifyTypes` ty2
