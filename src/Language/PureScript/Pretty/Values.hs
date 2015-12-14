@@ -16,7 +16,8 @@
 module Language.PureScript.Pretty.Values (
     prettyPrintValue,
     prettyPrintBinder,
-    prettyPrintBinderAtom
+    prettyPrintBinderAtom,
+    prettyPrintDeclaration
 ) where
 
 import Data.List (intercalate)
@@ -102,6 +103,8 @@ prettyPrintDeclaration _ (TypeDeclaration ident ty) =
   text (showIdent ident ++ " :: ") <> typeAsBox ty
 prettyPrintDeclaration d (ValueDeclaration ident _ [] (Right val)) =
   text (showIdent ident ++ " = ") <> prettyPrintValue (d - 1) val
+prettyPrintDeclaration d (VariableDeclaration ident val) =
+  text (showIdent ident ++ " := ") <> prettyPrintValue (d - 1) val
 prettyPrintDeclaration d (BindingGroupDeclaration ds) =
   vsep 1 left (map (prettyPrintDeclaration (d - 1) . toDecl) ds)
   where
