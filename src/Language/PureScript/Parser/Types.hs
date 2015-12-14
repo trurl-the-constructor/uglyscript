@@ -80,7 +80,7 @@ parseTypeAtom = indented *> P.choice (map P.try
             , parseTypeVariable
             , parseTypeConstructor
             , parseForAll
-            , parens parseRow
+            -- , parens parseRow
             , parseConstrainedType
             , parens parseTupleOrPolyType
             ])

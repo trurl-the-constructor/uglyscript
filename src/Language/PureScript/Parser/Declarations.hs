@@ -349,9 +349,6 @@ parseIdentifierAndValue =
   rest = C.indented *> colon *>  C.indented *>  val
   val = (Just <$> parseValue) <|> (underscore *> pure Nothing)
 
-parseNullaryAbs :: TokenParser Expr
-parseNullaryAbs = Abs (Left []) <$> (symbol' "^" *> parseValueAtom)
-
 parseAssign :: TokenParser Expr
 parseAssign = do
   ident <- C.parseQualified C.parseIdent
